@@ -3,6 +3,12 @@
 # Núcleo de Aprendizado por Reforço Profundo: rede neural que aproxima a função Q(s, a)
 torch
 
+# Álgebra vetorial: representação do Estado (S) contínuo como numpy array para a Q-Network
+numpy
+
+# Visualização: gera o gráfico de curva de aprendizado (Recompensa vs. Episódios)
+matplotlib
+
 # Camada de API: expõe o agente Tutor como serviço HTTP
 fastapi
 
