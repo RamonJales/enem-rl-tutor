@@ -1,6 +1,6 @@
 import unittest
-from env.knowledge_graph import KnowledgeGraph
-from env.bots import ConsistentStudentBot, GuessingStudentBot
+from pedagogy_rules.knowledge_graph import KnowledgeGraph
+from pedagogy_rules.bots import ConsistentStudentBot, GuessingStudentBot
 
 class TestKnowledgeGraph(unittest.TestCase):
     def setUp(self):
