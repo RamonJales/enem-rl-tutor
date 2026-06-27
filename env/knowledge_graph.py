@@ -1,3 +1,24 @@
+"""
+knowledge_graph.py
+==================
+Modelo de Domínio (regras do DAG de Matemática) do Tutor Inteligente.
+
+Este módulo expressa as REGRAS PEDAGÓGICAS do grafo de pré-requisitos de forma
+pura e reutilizável: navegação e PROPAGAÇÃO de conhecimento (uma resposta certa
+reforça os pré-requisitos; uma errada penaliza os dependentes).
+
+Posicionamento na arquitetura
+------------------------------
+Pertence ao domínio do Ambiente (`env/`), ao lado de `student_env.py` e
+`bots.py`. É um utilitário de domínio independente e SEM estado de treino: NÃO
+está no caminho crítico do DQN. O `StudentEnvironment` que treina o agente
+mantém sua própria dinâmica (logística estilo TRI + crença Bayesiana) lida do
+banco — intocada para preservar a reprodutibilidade e o desempenho do modelo já
+treinado. Esta classe é consumida por testes, pela API e por notebooks que
+precisam raciocinar sobre o DAG (ex.: propagar uma atualização de proficiência
+para conceitos vizinhos) sem reabrir o simulador.
+"""
+
 from typing import Dict
 
 class ConceptNode:

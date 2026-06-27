@@ -63,6 +63,43 @@ Ao final do treino, além dos pesos, é gerado automaticamente o gráfico da cur
 aprendizado em `data/weights/recompensa_vs_episodios.png` (Recompensa vs. Episódios,
 com média móvel e o melhor desempenho destacado) para análise posterior.
 
+### 3. Avaliar a robustez da política (após o treino)
+
+Com os pesos já treinados em `data/weights/dqn_policy.pt`, esta etapa roda a
+política **gulosa** (sem explorar e sem treinar) contra diferentes **perfis de
+aluno** para medir a generalização *out-of-distribution* (o agente nunca viu
+esses perfis no treino):
+
+A habilidade-base do aluno (com aprendizado e pré-requisitos) é sempre a do
+simulador; cada bot aplica apenas sua **distorção de comportamento** por cima:
+
+- **Modelo interno (treino)** — o próprio `StudentEnvironment` (baseline).
+- **Aluno consistente** — `ConsistentStudentBot` (sem distorção; serve de
+  verificação de sanidade, deve acompanhar o baseline).
+- **Aluno chutador** — `GuessingStudentBot` (chuta nas questões difíceis e tem
+  desatenção nas demais — alta variância).
+
+```bash
+python -m agent.avaliar_robustez
+```
+
+É um passo de **inferência puro**: não altera `student_env.py`, não otimiza a
+rede e não sobrescreve os pesos — apenas LÊ o `.pt` treinado. Ao final, imprime
+um resumo no console e salva o painel comparativo (recompensa, taxa de nível
+avançado e conceitos dominados por perfil) em
+`docs/figuras/avaliacao_robustez.png` para a documentação.
+
+### 4. Rodar os testes
+
+A suíte cobre o Modelo de Domínio (`env/knowledge_graph.py`), os perfis de aluno
+(`env/bots.py`) e um teste de integração do fluxo real (`StudentEnvironment` +
+`DQNAgent`) executado contra um banco SQLite temporário — sem tocar no banco de
+produção nem na dinâmica de treino:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
 ## Project structure
 
 ```
@@ -72,11 +109,12 @@ enem_rl_tutor/
 │   ├── model.py                 # Classe da Rede Neural em PyTorch (nn.Module)
 │   ├── replay_buffer.py         # Lógica de armazenamento de memória (Experience Replay)
 │   ├── dqn_agent.py             # Política do Agente (escolha da ação, cálculo de perda)
-│   └── train.py                 # Loop principal dos episódios de treinamento
+│   ├── train.py                 # Loop principal dos episódios de treinamento
+│   └── avaliar_robustez.py      # Avaliação da política treinada contra perfis de aluno (bots)
 ├── env/                         # Domínio do Ambiente Simulador
-│   ├── __init__.py
-│   ├── student_env.py           # Simulador: recebe ação, atualiza proficiência, devolve recompensa
-│   ├── knowledge_graph.py       # Regras do DAG de Matemática (pré-requisitos)
+│   ├── __init__.py              # Expõe StudentEnvironment, KnowledgeGraph e os bots
+│   ├── student_env.py           # Simulador: recebe ação, atualiza proficiência, devolve recompensa (caminho do DQN)
+│   ├── knowledge_graph.py       # Regras do DAG de Matemática (propagação de pré-requisitos)
 │   └── bots.py                  # Perfis simulados de alunos (ex: chutador, consistente)
 ├── api/                         # Domínio do Backend
 │   ├── __init__.py
@@ -87,6 +125,9 @@ enem_rl_tutor/
 │   └── weights/                 # Pesos salvos do modelo PyTorch (.pt)
 ├── notebooks/                   # Experimentação e Análise
 │   └── avaliacao_agente.ipynb   # Geração de gráficos de curva de aprendizado
+├── tests/                       # Testes (unittest)
+│   ├── __init__.py
+│   └── test_env.py              # Domínio (KnowledgeGraph/bots) + integração do fluxo real
 ├── Dockerfile                   # Receita de containerização da aplicação
 ├── docker-compose.yml           # Orquestração para deploy da API e dependências
 ├── .gitignore                   # Exclusão de arquivos sensíveis e pesados
