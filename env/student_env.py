@@ -15,7 +15,9 @@ Esta versão corrige os problemas de modelagem do MDP que impediam o aprendizado
 
        R_t = W_PROGRESSO * Δprof * peso_profundidade   (denso; evita travar no fácil)
            + bônus de domínio (1ª vez que um conceito cruza o limiar)
-           - W_ZDP * |ŷ - 0.5|                         (mantém na Zona de Des. Proximal)
+           + W_SONDA * max(0, Δerro_crença)             (sondagem: ganho de informação)
+           - W_TEDIO * max(0, ŷ - LIMIAR_TEDIO)         (questão fácil demais)
+           - W_FRUST * max(0, LIMIAR_FRUST - ŷ) [se errou] (difícil demais)
            - W_PASSO                                    (eficiência)
            + W_OBJETIVO  (terminal, ao dominar o conceito-alvo avançado)
 
@@ -34,6 +36,15 @@ Esta versão corrige os problemas de modelagem do MDP que impediam o aprendizado
 5. ACOPLAMENTO DE PRÉ-REQUISITOS: o sucesso e a velocidade de aprendizado num
    conceito dependem do domínio dos seus pré-requisitos no DAG — é isso que dá
    sentido pedagógico a "Remediar" e cria a dinâmica de currículo.
+
+6. MODELO DE CRENÇA BAYESIANO (BKT): o agente NÃO observa a proficiência
+   verdadeira do aluno (que determina y). O sistema mantém uma crença Beta(α, β)
+   sobre P(acerto) por conceito (de onde sai ŷ), atualizada por Bayes a cada
+   resposta. O agente observa a MÉDIA e o DESVIO (incerteza) da crença — uma
+   estatística suficiente que transforma o POMDP num MDP de estado-de-crença
+   (mantendo a DQN feedforward adequada). Essa assimetria dá função à sondagem:
+   testar um conceito incerto/subestimado reduz o erro de crença (ganho de
+   informação). Sem ela, ŷ seria a própria verdade e "sondar" não teria sentido.
 """
 
 from __future__ import annotations
@@ -61,14 +72,39 @@ FADIGA_MAXIMA = 1.0             # Limite de fadiga que encerra o episódio.
 PROFICIENCIA_MIN = 0.0
 PROFICIENCIA_MAX = 1.0
 
+# --- Modelo de crença BAYESIANO (BKT): proficiência REAL oculta × CRENÇA ------
+# O agente NÃO observa a proficiência verdadeira (que determina se o aluno
+# acerta). Em vez disso, o sistema mantém uma CRENÇA Bayesiana por conceito —
+# uma Beta(α, β) sobre P(acerto) — e o agente observa sua MÉDIA e seu DESVIO
+# (incerteza). Expor a incerteza torna a observação uma ESTATÍSTICA SUFICIENTE
+# da crença (POMDP -> MDP de estado-de-crença), mantendo a DQN feedforward
+# adequada e dando função à sondagem (reduzir o erro/incerteza da crença).
+ALFA0 = 1.0                    # Prior Beta (α): pseudo-acertos. (1,1) = uniforme.
+BETA0 = 1.0                    # Prior Beta (β): pseudo-erros.
+LAMBDA_ESQUEC = 0.95           # Esquecimento das contagens (rastreia aluno que evolui).
+DESVIO_MAX = 0.2887            # Desvio da Beta(1,1) = sqrt(1/12); normaliza a incerteza.
+
 # --- Função de recompensa ----------------------------------------------------
 LIMIAR_DOMINIO = 0.8            # τ: proficiência a partir da qual há "domínio".
 FRACAO_DOMINIO_ALVO = 0.70     # "Nível avançado": fração do currículo dominada.
 W_PROGRESSO = 4.0             # Peso do ganho denso de proficiência (trilha p/ o alvo).
 W_DOMINIO = 1.5               # Peso do bônus de DOMÍNIO (1ª vez que cruza o limiar).
-W_ZDP = 0.20                  # Penalidade por sair da Zona de Des. Proximal.
 W_PASSO = 0.01                # Custo por passo (incentiva eficiência).
 W_OBJETIVO = 15.0             # Bônus terminal por atingir o nível avançado.
+
+# --- Sondagem / ganho de informação (recompensa ASSIMÉTRICA) -----------------
+# Substitui a antiga penalidade simétrica de ZDP (W_ZDP·|ŷ-0.5|), que punia
+# qualquer desvio de 50% e, com isso, DESINCENTIVAVA sondar. Aqui o agente é
+# premiado por "sondar" uma questão mais difícil quando a aposta paga (o aluno
+# acerta algo improvável = salto de conhecimento / atalho eficiente) e só é
+# punido nos extremos: questão fácil demais (tédio/desperdício) ou difícil
+# demais que o aluno errou (frustração). Fiel ao PDF (+0.8 acerto difícil /
+# -0.9 erro elementar) e ao princípio da Zona de Desenvolvimento Proximal.
+W_SONDA = 4.0                 # Peso do GANHO DE INFORMAÇÃO (redução do erro de crença).
+W_TEDIO = 1.0                 # Penalidade por questão fácil demais (ŷ alto).
+LIMIAR_TEDIO = 0.85           # ŷ acima disso => desperdício de tempo (tédio).
+W_FRUST = 1.5                 # Penalidade por errar questão muito acima do nível.
+LIMIAR_FRUST = 0.20           # ŷ abaixo disso (e erro) => frustração.
 
 # Dificuldade-base por profundidade no DAG (conceito sem questões cadastradas).
 DIFICULDADE_RASA = 0.2
@@ -132,8 +168,9 @@ class StudentEnvironment:
         }
         self.n_conceitos = len(self.conceito_ids)
 
-        # Estado = [proficiências (N)] ++ [one-hot do conceito atual (N)].
-        self.dim_estado: int = 2 * self.n_conceitos
+        # Estado (observação do agente) = [proficiência ESTIMADA (N)]
+        #   ++ [one-hot do conceito atual (N)] ++ [evidência/certeza (N)].
+        self.dim_estado: int = 3 * self.n_conceitos
 
         # Mapas do DAG (por id de conceito).
         self.dependentes_ids: dict[int, list[int]] = {
@@ -157,11 +194,17 @@ class StudentEnvironment:
             if prof == self.profundidade_maxima
         }
 
-        # Proficiência INICIAL do aluno (lida 1x do banco, congelada em memória).
+        # Proficiência REAL inicial do aluno (a "verdade" oculta), lida 1x do
+        # banco e congelada. O agente NÃO a observa diretamente.
         self.proficiencia_inicial: dict[int, float] = self._ler_proficiencia_inicial()
 
-        # Estado de simulação vivo (reescrito a cada reset).
-        self.proficiencia: dict[int, float] = dict(self.proficiencia_inicial)
+        # Estado de simulação vivo (reescrito a cada reset):
+        #   prof_real    -> verdade oculta que determina se o aluno acerta (y);
+        #   alpha/beta   -> crença Bayesiana Beta(α, β) sobre P(acerto) por
+        #                   conceito; o agente observa sua MÉDIA e seu DESVIO.
+        self.prof_real: dict[int, float] = dict(self.proficiencia_inicial)
+        self.alpha: dict[int, float] = {cid: ALFA0 for cid in self.conceito_ids}
+        self.beta: dict[int, float] = {cid: BETA0 for cid in self.conceito_ids}
         self.conceito_atual_id: int = self.conceito_ids[0]
         self.fadiga: float = 0.0
         self.ja_dominados: set[int] = set()
@@ -228,14 +271,22 @@ class StudentEnvironment:
     # ------------------------------------------------------------------ #
     def _get_state(self) -> np.ndarray:
         """
-        Monta o vetor de Estado: proficiências ++ one-hot do conceito atual.
+        Monta o vetor de Estado (o que o agente OBSERVA):
+          [MÉDIA da crença] ++ [one-hot do conceito atual] ++ [INCERTEZA da crença].
 
-        O one-hot torna o problema Markoviano: a semântica de "Avançar/Reforçar/
-        Remediar" depende de ONDE o aluno está, e agora o agente enxerga isso.
+        - Média + incerteza da Beta(α,β) formam uma ESTATÍSTICA SUFICIENTE da
+          crença: o agente "sabe o que sabe E o quanto tem certeza", o que torna
+          o POMDP um MDP de estado-de-crença (feedforward DQN volta a bastar).
+        - O one-hot torna o problema Markoviano (Avançar/Reforçar/Remediar
+          dependem de ONDE o aluno está).
+        - Incerteza alta sinaliza conceitos que valem uma SONDAGEM.
         """
         estado = np.zeros(self.dim_estado, dtype=np.float32)
         for cid, idx in self.indice_por_conceito.items():
-            estado[idx] = self.proficiencia[cid]
+            estado[idx] = self._crenca_media(cid)
+            estado[2 * self.n_conceitos + idx] = (
+                self._crenca_desvio(cid) / DESVIO_MAX
+            )
         idx_atual = self.indice_por_conceito[self.conceito_atual_id]
         estado[self.n_conceitos + idx_atual] = 1.0
         return estado
@@ -248,13 +299,16 @@ class StudentEnvironment:
         cada episódio parte do mesmo aluno, em vez de continuar de um aluno já
         saturado por episódios anteriores.
         """
-        self.proficiencia = dict(self.proficiencia_inicial)
+        self.prof_real = dict(self.proficiencia_inicial)
+        self.alpha = {cid: ALFA0 for cid in self.conceito_ids}
+        self.beta = {cid: BETA0 for cid in self.conceito_ids}
         self.conceito_atual_id = self.conceito_ids[0]
         self.fadiga = 0.0
+        # Domínio é medido na proficiência REAL (aprendizado de verdade).
         # Conceitos já dominados no estado inicial não rendem bônus de domínio.
         self.ja_dominados = {
             cid
-            for cid, prof in self.proficiencia.items()
+            for cid, prof in self.prof_real.items()
             if prof >= LIMIAR_DOMINIO
         }
         return self._get_state()
@@ -288,8 +342,9 @@ class StudentEnvironment:
             candidatos = [self.conceito_atual_id]
         if not candidatos:
             return self.conceito_atual_id
-        # Menor proficiência primeiro; desempate determinístico pelo id.
-        return min(candidatos, key=lambda cid: (self.proficiencia[cid], cid))
+        # Menor MÉDIA de crença primeiro (o sistema navega pela crença);
+        # desempate determinístico pelo id.
+        return min(candidatos, key=lambda cid: (self._crenca_media(cid), cid))
 
     def _selecionar_questao(self, conceito_id: int) -> Questao | None:
         """Sorteia uma questão do conceito-alvo (para `info`/logging), se houver."""
@@ -301,43 +356,78 @@ class StudentEnvironment:
     # ------------------------------------------------------------------ #
     # Dinâmica do aluno
     # ------------------------------------------------------------------ #
-    def _dominio_pre_requisitos(self, conceito_id: int) -> float:
-        """Domínio médio dos pré-requisitos do conceito (1.0 se não houver)."""
+    def _dominio_pre_requisitos(
+        self, conceito_id: int, prof: dict[int, float]
+    ) -> float:
+        """Domínio médio dos pré-requisitos sob um dado mapa (real ou estimado)."""
         pres = self.pre_requisitos_ids.get(conceito_id, [])
         if not pres:
             return 1.0
-        return sum(self.proficiencia[p] for p in pres) / len(pres)
+        return sum(prof[p] for p in pres) / len(pres)
 
-    def _probabilidade_acerto(self, conceito_id: int) -> float:
+    def _probabilidade_acerto(
+        self, conceito_id: int, prof: dict[int, float]
+    ) -> float:
         """
-        Estima ŷ (probabilidade de acerto) via logística estilo TRI.
+        Probabilidade de acerto via logística estilo TRI, sob um mapa `prof`.
+
+        Usada com `prof_real` para gerar a probabilidade VERDADEIRA (o resultado
+        y). O ŷ ESTIMADO do sistema NÃO vem daqui: é a média da crença Beta
+        (`_crenca_media`), mantida por atualização Bayesiana (BKT).
 
         A folga combina (proficiência - dificuldade) com o domínio dos
-        pré-requisitos: pré-requisitos fracos derrubam ŷ — é isso que dá valor a
-        "Remediar" antes de "Avançar".
+        pré-requisitos: pré-requisitos fracos derrubam a probabilidade — é isso
+        que dá valor a "Remediar" antes de "Avançar".
         """
-        prof = self.proficiencia[conceito_id]
+        p = prof[conceito_id]
         dificuldade = self.dificuldade_conceito[conceito_id]
-        pre = self._dominio_pre_requisitos(conceito_id)
-        folga = (prof - dificuldade) + ALPHA_PRE_REQUISITO * (pre - 0.5)
+        pre = self._dominio_pre_requisitos(conceito_id, prof)
+        folga = (p - dificuldade) + ALPHA_PRE_REQUISITO * (pre - 0.5)
         return 1.0 / (1.0 + math.exp(-SENSIBILIDADE_LOGISTICA * folga))
 
     def _atualizar_proficiencia(self, conceito_id: int, acertou: bool) -> float:
         """
-        Atualiza (em memória) a proficiência após responder e retorna o Δ.
+        Atualiza a proficiência REAL (verdade oculta) após responder e retorna Δ.
 
-        O ganho ao acertar é escalado pelo domínio dos pré-requisitos: aprende-se
-        mais rápido um conceito cujos pré-requisitos já estão sólidos.
+        O ganho ao acertar é escalado pelo domínio REAL dos pré-requisitos:
+        aprende-se mais rápido um conceito cujos pré-requisitos já estão sólidos.
         """
-        antes = self.proficiencia[conceito_id]
+        antes = self.prof_real[conceito_id]
         if acertou:
-            pre = self._dominio_pre_requisitos(conceito_id)
+            pre = self._dominio_pre_requisitos(conceito_id, self.prof_real)
             delta = TAXA_APRENDIZADO * (0.5 + 0.5 * pre)
         else:
             delta = -TAXA_ESQUECIMENTO
         depois = min(PROFICIENCIA_MAX, max(PROFICIENCIA_MIN, antes + delta))
-        self.proficiencia[conceito_id] = depois
+        self.prof_real[conceito_id] = depois
         return depois - antes
+
+    def _crenca_media(self, conceito_id: int) -> float:
+        """Média da crença Beta(α, β) = α / (α + β) = P(acerto) estimada."""
+        a, b = self.alpha[conceito_id], self.beta[conceito_id]
+        return a / (a + b)
+
+    def _crenca_desvio(self, conceito_id: int) -> float:
+        """Desvio-padrão da Beta(α, β): incerteza da crença (alto => sondar)."""
+        a, b = self.alpha[conceito_id], self.beta[conceito_id]
+        n = a + b
+        return math.sqrt(a * b / (n * n * (n + 1.0)))
+
+    def _atualizar_crenca(self, conceito_id: int, y: int) -> None:
+        """
+        Atualização Bayesiana (BKT) da crença após observar o resultado y.
+
+        Aplica um leve esquecimento das contagens (aproxima-as do prior) para
+        que a crença RASTREIE um aluno que evolui, e então incorpora a evidência
+        (acerto -> +α, erro -> +β). A média se move na direção da verdade e a
+        incerteza (desvio) encolhe com a evidência acumulada.
+        """
+        self.alpha[conceito_id] = ALFA0 + LAMBDA_ESQUEC * (self.alpha[conceito_id] - ALFA0)
+        self.beta[conceito_id] = BETA0 + LAMBDA_ESQUEC * (self.beta[conceito_id] - BETA0)
+        if y:
+            self.alpha[conceito_id] += 1.0
+        else:
+            self.beta[conceito_id] += 1.0
 
     # ------------------------------------------------------------------ #
     # Passo do ambiente
@@ -353,25 +443,41 @@ class StudentEnvironment:
                 f"Ação inválida: {acao!r}. Esperado um de {ACOES_VALIDAS}."
             )
 
-        # 1. Ação -> conceito-alvo (a dificuldade vem do conceito, não da prof.).
+        # 1. Ação -> conceito-alvo (o sistema navega pela ESTIMATIVA).
         conceito_alvo_id = self._selecionar_conceito_alvo(acao)
 
-        # 2. ŷ e resultado simulado do aluno (acerta com probabilidade ŷ).
-        y_hat = self._probabilidade_acerto(conceito_alvo_id)
-        y = 1 if random.random() < y_hat else 0
+        # 2. ŷ = MÉDIA da crença (o que o sistema acha) vs. probabilidade REAL
+        #    (verdade oculta). O aluno acerta segundo a verdade.
+        y_hat = self._crenca_media(conceito_alvo_id)
+        p_real = self._probabilidade_acerto(conceito_alvo_id, self.prof_real)
+        y = 1 if random.random() < p_real else 0
 
-        # 3. Transição: atualiza a proficiência e computa o ganho.
+        # 3. Erro de crença ANTES da observação (verdade vs. crença).
+        erro_antes = abs(p_real - y_hat)
+
+        # 4. Transição: o aluno aprende (prof_real) e o sistema reavalia (Bayes).
         ganho = self._atualizar_proficiencia(conceito_alvo_id, acertou=bool(y))
+        self._atualizar_crenca(conceito_alvo_id, y)
 
-        # 4. Recompensa orientada à meta (ver docstring do módulo).
+        # 5. Recompensa orientada à meta (ver docstring do módulo).
         peso_prof = self.profundidade[conceito_alvo_id] / self.profundidade_maxima
         recompensa = W_PROGRESSO * ganho * peso_prof
-        recompensa -= W_ZDP * abs(y_hat - 0.5)
         recompensa -= W_PASSO
 
-        #    Bônus de domínio (apenas na 1ª vez que o conceito cruza o limiar).
+        # Sondagem = GANHO DE INFORMAÇÃO: quanto a observação aproximou a MÉDIA
+        # da crença da verdade (|p_real - ŷ| caiu). Premia DESCOBRIR domínio
+        # oculto e é AUTO-LIMITADO (o erro de crença total é finito -> não dá
+        # para farmar, ao contrário de um bônus de surpresa por passo).
+        # Tédio/frustração penalizam os extremos (fácil demais / difícil demais).
+        erro_depois = abs(p_real - self._crenca_media(conceito_alvo_id))
+        sondagem = W_SONDA * max(0.0, erro_antes - erro_depois)
+        tedio = W_TEDIO * max(0.0, y_hat - LIMIAR_TEDIO)
+        frustracao = W_FRUST * max(0.0, LIMIAR_FRUST - y_hat) if y == 0 else 0.0
+        recompensa += sondagem - tedio - frustracao
+
+        #    Bônus de domínio REAL (1ª vez que o conceito de fato cruza o limiar).
         if (
-            self.proficiencia[conceito_alvo_id] >= LIMIAR_DOMINIO
+            self.prof_real[conceito_alvo_id] >= LIMIAR_DOMINIO
             and conceito_alvo_id not in self.ja_dominados
         ):
             self.ja_dominados.add(conceito_alvo_id)
@@ -413,9 +519,14 @@ class StudentEnvironment:
             "conceito_alvo_id": conceito_alvo_id,
             "questao_id": questao.id if questao else None,
             "dificuldade": self.dificuldade_conceito[conceito_alvo_id],
-            "y_hat": y_hat,
+            "y_hat": y_hat,            # média da crença (ŷ do sistema) ANTES da obs.
+            "p_real": p_real,          # probabilidade real (verdade oculta).
             "y": y,
             "ganho": ganho,
+            "sondagem": sondagem,      # ganho de informação (redução do erro).
+            "frustracao": frustracao,
+            "incerteza": self._crenca_desvio(conceito_alvo_id),  # desvio da crença.
+            "erro_crenca": abs(p_real - y_hat),  # quão errada estava a crença.
             "fadiga": self.fadiga,
             "objetivo_atingido": objetivo_atingido,
             "n_dominados": len(self.ja_dominados),
