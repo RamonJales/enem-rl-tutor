@@ -41,7 +41,7 @@ from env.student_env import StudentEnvironment
 
 
 NUM_EPISODIOS = 500          # Quantidade de episódios de treinamento.
-MAX_PASSOS_POR_EPISODIO = 50  # Teto de passos (o env também encerra por fadiga).
+MAX_PASSOS_POR_EPISODIO = 250  # Teto de passos (o env também encerra por fadiga/meta).
 BATCH_SIZE = 64              # Tamanho do mini-batch do Experience Replay.
 
 # Decaimento exponencial do epsilon (exploração -> explotação).
@@ -169,6 +169,44 @@ def garantir_banco() -> None:
         criar_banco_e_popular(reset=True)
 
 
+def avaliar_politica(
+    agente: DQNAgent,
+    env: StudentEnvironment,
+    n_episodios: int = 5,
+    max_passos: int = MAX_PASSOS_POR_EPISODIO,
+) -> tuple[float, float]:
+    """
+    Avalia a política de forma GULOSA (epsilon=0), sem treinar nem explorar.
+
+    É esta a métrica que reflete o desempenho de IMPLANTAÇÃO: o treino DQN com
+    epsilon>0 pode mascarar políticas que, no modo guloso, colapsam em laços
+    degenerados (ex.: só "Remediar"). Selecionar o melhor checkpoint pela
+    recompensa de treino é enganoso; por isso avaliamos com epsilon=0.
+
+    Retorna
+    -------
+    (recompensa_média, taxa_sucesso) : tuple[float, float]
+        Média da recompensa acumulada e fração de episódios que atingiram o
+        nível avançado, ambos sob política gulosa.
+    """
+    recompensas: list[float] = []
+    sucessos: list[int] = []
+    for _ in range(n_episodios):
+        estado = env.reset()
+        total = 0.0
+        atingiu = False
+        for _ in range(max_passos):
+            acao_idx = agente.select_action(estado, epsilon=0.0)
+            estado, recompensa, done, info = env.step(ACOES[acao_idx])
+            total += recompensa
+            atingiu = bool(info.get("objetivo_atingido", False))
+            if done:
+                break
+        recompensas.append(total)
+        sucessos.append(int(atingiu))
+    return float(np.mean(recompensas)), float(np.mean(sucessos))
+
+
 def treinar() -> DQNAgent:
     """
     Executa o loop de episódios e retorna o agente treinado.
@@ -191,6 +229,12 @@ def treinar() -> DQNAgent:
 
     epsilon = EPSILON_INICIAL
     historico_recompensas: list[float] = []
+
+    # Checkpoint do MELHOR desempenho: o treino DQN oscila (pode degradar após o
+    # pico), então salvamos a política da melhor avaliação gulosa, não a última.
+    os.makedirs(DIR_PESOS, exist_ok=True)
+    melhor_metrica = -float("inf")
+    melhor_episodio = 0
 
     try:
         for episodio in range(1, NUM_EPISODIOS + 1):
@@ -228,23 +272,35 @@ def treinar() -> DQNAgent:
             # Decaimento do epsilon ao fim de cada episódio (com piso).
             epsilon = max(EPSILON_FINAL, epsilon * EPSILON_DECAIMENTO)
 
-            # Log periódico de progresso.
+            # Avaliação GULOSA periódica + checkpoint do melhor desempenho real.
             if episodio % LOG_A_CADA == 0:
-                media_recompensa = np.mean(historico_recompensas[-LOG_A_CADA:])
+                rec_aval, taxa_aval = avaliar_politica(agente, env)
                 media_perda = np.mean(perdas) if perdas else float("nan")
                 print(
                     f"Episódio {episodio:4d}/{NUM_EPISODIOS} | "
-                    f"epsilon={epsilon:.3f} | "
-                    f"recompensa_média={media_recompensa:+.3f} | "
-                    f"perda_média={media_perda:.4f}"
+                    f"epsilon={epsilon:.3f} | perda_média={media_perda:.4f} | "
+                    f"[guloso] recompensa={rec_aval:+.2f} | "
+                    f"nível_avançado={taxa_aval:.0%}"
                 )
+                # Métrica de seleção: taxa de sucesso gulosa (desempate: recompensa).
+                metrica = taxa_aval + rec_aval * 1e-4
+                if metrica > melhor_metrica:
+                    melhor_metrica = metrica
+                    melhor_episodio = episodio
+                    agente.salvar(CAMINHO_PESOS)
     finally:
         env.close()  # garante fechamento da sessão do SQLAlchemy.
 
-    # Persiste os pesos treinados.
-    os.makedirs(DIR_PESOS, exist_ok=True)
-    agente.salvar(CAMINHO_PESOS)
-    print(f"Treino concluído. Pesos salvos em: {CAMINHO_PESOS}")
+    # O melhor checkpoint já foi salvo durante o treino. Se nenhuma janela foi
+    # avaliada (treino muito curto), salva a política final como fallback.
+    if melhor_episodio == 0:
+        agente.salvar(CAMINHO_PESOS)
+        print(f"Treino concluído. Pesos (finais) salvos em: {CAMINHO_PESOS}")
+    else:
+        print(
+            f"Treino concluído. Melhor política gulosa (ep. {melhor_episodio}, "
+            f"nível_avançado≈{melhor_metrica:.0%}) salva em: {CAMINHO_PESOS}"
+        )
 
     # Gera e salva o gráfico da curva de aprendizado (Recompensa vs. Episódios).
     salvar_grafico_recompensa(historico_recompensas)

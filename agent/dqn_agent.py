@@ -42,7 +42,7 @@ class DQNAgent:
         gamma: float = 0.99,
         lr: float = 1e-3,
         capacidade_buffer: int = 10_000,
-        freq_update_target: int = 100,
+        tau: float = 0.005,
         device: torch.device | str | None = None,
     ) -> None:
         """
@@ -60,8 +60,11 @@ class DQNAgent:
             Taxa de aprendizado do otimizador Adam.
         capacidade_buffer : int
             Capacidade máxima do Experience Replay.
-        freq_update_target : int
-            A cada quantas otimizações a target_net é sincronizada.
+        tau : float
+            Coeficiente do soft update (Polyak) da target_net a cada passo:
+            θ_target <- τ·θ_policy + (1-τ)·θ_target. Valores pequenos (~0.005)
+            fazem a target_net seguir a policy_net de forma suave e contínua,
+            eliminando os saltos do "hard update" (causa das curvas serrilhadas).
         device : torch.device | str | None
             Dispositivo de execução. Se None, escolhe CUDA se disponível.
         """
@@ -75,7 +78,7 @@ class DQNAgent:
         self.dim_estado = dim_estado
         self.dim_acoes = dim_acoes
         self.gamma = gamma
-        self.freq_update_target = freq_update_target
+        self.tau = tau
 
         # policy_net: rede treinada (gera ações e recebe os gradientes).
         self.policy_net = DQN(dim_estado, dim_acoes, dim_oculta).to(self.device)
@@ -155,7 +158,7 @@ class DQNAgent:
           3. Alvo de Bellman: r + gamma * max_a' Q_target(s', a') * (1 - done).
           4. Loss Huber entre Q atual e alvo.
           5. Backpropagation + passo do Adam (com clip de gradiente).
-          6. Sincroniza a target_net a cada `freq_update_target` passos.
+          6. Soft update (Polyak) da target_net a cada passo.
 
         Retorna
         -------
@@ -193,10 +196,9 @@ class DQNAgent:
         nn.utils.clip_grad_value_(self.policy_net.parameters(), 1.0)
         self.optimizer.step()
 
-        # 6. Sincronização periódica da target_net.
+        # 6. Soft update (Polyak) da target_net a cada passo.
         self.passos_otimizacao += 1
-        if self.passos_otimizacao % self.freq_update_target == 0:
-            self.update_target()
+        self.update_target()
 
         return float(loss.item())
 
@@ -204,8 +206,12 @@ class DQNAgent:
     # Sincronização da target_net
     # ------------------------------------------------------------------ #
     def update_target(self) -> None:
-        """Copia os pesos da policy_net para a target_net (hard update)."""
-        self.target_net.load_state_dict(self.policy_net.state_dict())
+        """Soft update (Polyak): θ_target <- τ·θ_policy + (1-τ)·θ_target."""
+        with torch.no_grad():
+            for p_target, p_policy in zip(
+                self.target_net.parameters(), self.policy_net.parameters()
+            ):
+                p_target.mul_(1.0 - self.tau).add_(p_policy, alpha=self.tau)
 
     # ------------------------------------------------------------------ #
     # Persistência dos pesos
