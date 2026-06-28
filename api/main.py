@@ -12,7 +12,6 @@ ao aluno real.
 from __future__ import annotations
 
 import json
-import math
 import os
 import random
 import sys
@@ -26,7 +25,7 @@ from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, selectinload
 
 # ─── Caminho do projeto ───────────────────────────────────────────────────────
@@ -41,8 +40,20 @@ from data.database_setup import (
     EstadoAluno,
     Interacao,
     Questao,
+    Usuario,
+    gerar_hash_senha,
+    verificar_senha,
 )
 from agent.model import DQN
+# Fonte ÚNICA da dinâmica do aluno (mesma do treino): nada de constantes/lógica
+# "espelhadas" na API — importamos direto do ambiente para não haver divergência.
+from env.student_env import (
+    StudentEnvironment,
+    LIMIAR_DOMINIO,
+    FRACAO_DOMINIO_ALVO,
+    FADIGA_POR_PASSO,
+    DESVIO_MAX,
+)
 from api.schemas import (
     ConceitoProficiencia,
     DesempenhoResponse,
@@ -50,30 +61,11 @@ from api.schemas import (
     LoginRequest,
     LoginResponse,
     QuestaoResponse,
+    RegisterRequest,
     ResponderRequest,
     ResponderResponse,
     SessaoResponse,
 )
-
-# ─── Constantes do modelo do estudante (espelhadas de student_env.py) ─────────
-SENSIBILIDADE_LOGISTICA = 5.0
-TAXA_APRENDIZADO = 0.12
-TAXA_ESQUECIMENTO = 0.05
-ALPHA_PRE_REQUISITO = 0.6
-FADIGA_POR_PASSO = 0.004
-ALFA0 = 1.0
-BETA0 = 1.0
-LAMBDA_ESQUEC = 0.95
-DESVIO_MAX = 0.2887
-LIMIAR_DOMINIO = 0.8
-FRACAO_DOMINIO_ALVO = 0.70
-
-# ─── Usuários demo (sem tabela de usuários no banco) ─────────────────────────
-USUARIOS: dict[str, dict] = {
-    "aluno": {"senha": "enem2024", "nome": "Ana Beatriz Silva", "estudante_id": 1},
-    "demo":  {"senha": "demo",     "nome": "Aluno Demo",        "estudante_id": 1},
-    "admin": {"senha": "admin",    "nome": "Administrador",     "estudante_id": 1},
-}
 
 # Nome legível por conceito (remove underscores)
 NOMES_DISPLAY: dict[str, str] = {
@@ -94,129 +86,169 @@ NOMES_DISPLAY: dict[str, str] = {
 
 # ─── Estado de sessão por aluno ───────────────────────────────────────────────
 class SessaoAluno:
-    """Estado de uma sessão de estudo em memória."""
+    """
+    Estado de uma sessão de estudo em memória.
 
-    def __init__(
-        self,
-        estudante_id: int,
-        nome: str,
-        conceito_ids: list[int],
-        conceito_nomes: dict[int, str],
-        prof_inicial: dict[int, float],
-        dependentes_ids: dict[int, list[int]],
-        pre_requisitos_ids: dict[int, list[int]],
-    ) -> None:
+    A dinâmica (crença BKT, vetor de estado, navegação no DAG, atualização de
+    proficiência) NÃO é reimplementada aqui: a sessão encapsula uma instância do
+    MESMO `StudentEnvironment` usado no treino do DQN. Isso garante FONTE ÚNICA
+    DE VERDADE — a API e o agente não podem divergir (foi uma divergência dessas,
+    reimplementada à mão, que causou um bug de estado fora da distribuição).
+
+    A API apenas ORQUESTRA o fluxo com o aluno REAL: serve a questão, recebe a
+    resposta e repassa o resultado ao ambiente (em vez de o ambiente amostrar o
+    acerto internamente, como faz no treino).
+    """
+
+    def __init__(self, estudante_id: int, nome: str) -> None:
         self.estudante_id = estudante_id
         self.nome = nome
-        self.conceito_ids = conceito_ids
-        self.conceito_nomes = conceito_nomes
-        self.n_conceitos = len(conceito_ids)
-        self.indice_por_conceito: dict[int, int] = {
-            cid: i for i, cid in enumerate(conceito_ids)
-        }
-        self.dependentes_ids = dependentes_ids
-        self.pre_requisitos_ids = pre_requisitos_ids
-
-        # Estado mutável da sessão
-        self.prof_real: dict[int, float] = dict(prof_inicial)
-        self.alpha: dict[int, float] = {cid: ALFA0 for cid in conceito_ids}
-        self.beta: dict[int, float]  = {cid: BETA0 for cid in conceito_ids}
-        self.conceito_atual_id: int = conceito_ids[0]
-        self.fadiga: float = 0.0
+        # Fonte única da dinâmica: o ambiente de treino, em modo de inferência.
+        # reset() carrega a proficiência persistida (EstadoAluno.proficiencia);
+        # logo abaixo carregamos também a CRENÇA persistida (α, β).
+        self.env = StudentEnvironment(DB_URL, estudante_id)
+        self.env.reset()
+        self._carregar_crenca_persistida()
+        self.conceito_nomes: dict[int, str] = dict(_conceito_nomes)
         self.passos: int = 0
-        self.ja_dominados: set[int] = {
-            cid for cid, p in prof_inicial.items() if p >= LIMIAR_DOMINIO
-        }
         self.historico: list[dict] = []
-        self.questao_pendente: Optional[dict] = None  # questão exibida aguardando resposta
+        self.questao_pendente: Optional[dict] = None  # questão aguardando resposta
 
-    # ── Crença Bayesiana ──────────────────────────────────────────────────────
+    # ── Estado vivo (delegado ao ambiente) ────────────────────────────────────
+    @property
+    def conceito_ids(self) -> list[int]:
+        return self.env.conceito_ids
+
+    @property
+    def n_conceitos(self) -> int:
+        return self.env.n_conceitos
+
+    @property
+    def prof_real(self) -> dict[int, float]:
+        return self.env.prof_real
+
+    @property
+    def conceito_atual_id(self) -> int:
+        return self.env.conceito_atual_id
+
+    @conceito_atual_id.setter
+    def conceito_atual_id(self, value: int) -> None:
+        self.env.conceito_atual_id = value
+
+    @property
+    def fadiga(self) -> float:
+        return self.env.fadiga
+
+    @fadiga.setter
+    def fadiga(self, value: float) -> None:
+        self.env.fadiga = value
+
+    @property
+    def ja_dominados(self) -> set[int]:
+        return self.env.ja_dominados
+
+    @property
+    def pre_requisitos_ids(self) -> dict[int, list[int]]:
+        return self.env.pre_requisitos_ids
+
+    @property
+    def dependentes_ids(self) -> dict[int, list[int]]:
+        return self.env.dependentes_ids
+
+    # ── Dinâmica (delegada ao ambiente — fonte única) ─────────────────────────
+    def get_state(self) -> np.ndarray:
+        """Vetor de observação do DQN (crença + one-hot + incerteza)."""
+        return self.env._get_state()
+
     def _crenca_media(self, cid: int) -> float:
-        a, b = self.alpha[cid], self.beta[cid]
-        return a / (a + b)
+        return self.env._crenca_media(cid)
 
-    def _crenca_desvio(self, cid: int) -> float:
-        a, b = self.alpha[cid], self.beta[cid]
-        n = a + b
-        return math.sqrt(a * b / (n * n * (n + 1)))
+    def selecionar_conceito_alvo(self, acao: str) -> int:
+        return self.env._selecionar_conceito_alvo(acao)
 
     def _atualizar_crenca(self, cid: int, acertou: bool) -> None:
-        """Atualização Bayesiana da crença Beta(α,β)."""
-        self.alpha[cid] = LAMBDA_ESQUEC * self.alpha[cid] + (1.0 if acertou else 0.0)
-        self.beta[cid]  = LAMBDA_ESQUEC * self.beta[cid]  + (0.0 if acertou else 1.0)
-
-    # ── Dinâmica de proficiência ───────────────────────────────────────────────
-    def _dominio_pre_requisitos(self, cid: int) -> float:
-        pres = self.pre_requisitos_ids.get(cid, [])
-        if not pres:
-            return 1.0
-        return sum(self.prof_real[p] for p in pres) / len(pres)
-
-    def _prob_acerto(self, cid: int) -> float:
-        """ŷ — probabilidade estimada via média da crença (BKT)."""
-        return self._crenca_media(cid)
+        """Repassa a resposta REAL à crença Bayesiana do ambiente."""
+        self.env._atualizar_crenca(cid, 1 if acertou else 0)
 
     def _atualizar_proficiencia(self, cid: int, acertou: bool) -> float:
-        """Atualiza prof_real e retorna Δ."""
-        antes = self.prof_real[cid]
-        if acertou:
-            pre = self._dominio_pre_requisitos(cid)
-            delta = TAXA_APRENDIZADO * (0.5 + 0.5 * pre)
-            self.prof_real[cid] = min(1.0, antes + delta)
-        else:
-            self.prof_real[cid] = max(0.0, antes - TAXA_ESQUECIMENTO)
-        return self.prof_real[cid] - antes
+        """Atualiza a proficiência via ambiente e retorna o Δ."""
+        return self.env._atualizar_proficiencia(cid, acertou)
 
-    # ── Estado (vetor de observação para o DQN) ───────────────────────────────
-    def get_state(self) -> np.ndarray:
-        estado = np.zeros(3 * self.n_conceitos, dtype=np.float32)
-        for cid, idx in self.indice_por_conceito.items():
-            estado[idx] = self._crenca_media(cid)
-            estado[2 * self.n_conceitos + idx] = (
-                self._crenca_desvio(cid) / DESVIO_MAX
-            )
-        idx_atual = self.indice_por_conceito[self.conceito_atual_id]
-        estado[self.n_conceitos + idx_atual] = 1.0
-        return estado
+    def fechar(self) -> None:
+        """Libera a conexão de banco do ambiente ao encerrar a sessão."""
+        self.env.close()
 
-    # ── Navegação no DAG ──────────────────────────────────────────────────────
-    def selecionar_conceito_alvo(self, acao: str) -> int:
-        if acao == "Avançar":
-            candidatos = self.dependentes_ids.get(self.conceito_atual_id, [])
-        elif acao == "Remediar":
-            candidatos = self.pre_requisitos_ids.get(self.conceito_atual_id, [])
-        else:
-            candidatos = [self.conceito_atual_id]
-        if not candidatos:
-            return self.conceito_atual_id
-        return min(candidatos, key=lambda cid: (self._crenca_media(cid), cid))
+    # ── Persistência longitudinal (proficiência + crença por aluno) ───────────
+    def _carregar_crenca_persistida(self) -> None:
+        """Injeta no ambiente a crença Beta(α,β) salva no banco para este aluno.
+
+        A proficiência já é carregada pelo `env.reset()`; aqui sobrescrevemos a
+        crença (que o reset inicia no prior) com a que foi persistida, de modo
+        que o tutor RETOME o que sabia sobre o aluno entre sessões.
+        """
+        with Session(_engine) as db:
+            registros = db.scalars(
+                select(EstadoAluno).where(
+                    EstadoAluno.estudante_id == self.estudante_id
+                )
+            ).all()
+        for reg in registros:
+            if reg.conceito_id in self.env.alpha:
+                self.env.alpha[reg.conceito_id] = float(reg.alpha)
+                self.env.beta[reg.conceito_id] = float(reg.beta)
+
+    def persistir(self, cid: int) -> None:
+        """Grava (upsert) a proficiência e a crença do conceito no banco."""
+        with Session(_engine) as db:
+            reg = db.scalars(
+                select(EstadoAluno).where(
+                    EstadoAluno.estudante_id == self.estudante_id,
+                    EstadoAluno.conceito_id == cid,
+                )
+            ).first()
+            if reg is None:
+                reg = EstadoAluno(estudante_id=self.estudante_id, conceito_id=cid)
+                db.add(reg)
+            reg.proficiencia = float(self.env.prof_real[cid])
+            reg.alpha = float(self.env.alpha[cid])
+            reg.beta = float(self.env.beta[cid])
+            db.commit()
+
+    # ── Crença observável (estimativa + incerteza) ────────────────────────────
+    def incerteza(self, cid: int) -> float:
+        """Incerteza da estimativa em [0,1] (1 = sem evidência; 0 = muito certo)."""
+        return min(1.0, self.env._crenca_desvio(cid) / DESVIO_MAX)
+
+    def estimado_dominado(self, cid: int) -> bool:
+        """Domínio ESTIMADO: a crença média cruza o limiar de domínio."""
+        return self._crenca_media(cid) >= LIMIAR_DOMINIO
+
+    def conceito_proficiencia(self, cid: int) -> ConceitoProficiencia:
+        """Monta o resumo de um conceito a partir da CRENÇA (não da verdade)."""
+        nome = self.conceito_nomes[cid]
+        return ConceitoProficiencia(
+            id=cid,
+            nome=nome,
+            nome_display=NOMES_DISPLAY.get(nome, nome),
+            proficiencia=round(self._crenca_media(cid), 4),   # estimativa
+            incerteza=round(self.incerteza(cid), 4),
+            dominado=self.estimado_dominado(cid),
+            pre_requisitos=self.pre_requisitos_ids.get(cid, []),
+            dependentes=self.dependentes_ids.get(cid, []),
+        )
 
     # ── Resumo de proficiências ───────────────────────────────────────────────
     def to_proficiencias(self) -> list[ConceitoProficiencia]:
-        result = []
-        for cid in self.conceito_ids:
-            nome = self.conceito_nomes[cid]
-            result.append(
-                ConceitoProficiencia(
-                    id=cid,
-                    nome=nome,
-                    nome_display=NOMES_DISPLAY.get(nome, nome),
-                    proficiencia=round(self.prof_real[cid], 4),
-                    dominado=cid in self.ja_dominados,
-                    pre_requisitos=self.pre_requisitos_ids.get(cid, []),
-                    dependentes=self.dependentes_ids.get(cid, []),
-                )
-            )
-        return result
+        return [self.conceito_proficiencia(cid) for cid in self.conceito_ids]
 
     @property
     def dominados_count(self) -> int:
-        return sum(1 for cid in self.conceito_ids if self.prof_real[cid] >= LIMIAR_DOMINIO)
+        # Domínio medido pela ESTIMATIVA do sistema (não pela verdade oculta).
+        return sum(1 for cid in self.conceito_ids if self.estimado_dominado(cid))
 
     @property
     def episodio_completo(self) -> bool:
-        dominados = self.dominados_count
-        return dominados / self.n_conceitos >= FRACAO_DOMINIO_ALVO
+        return self.dominados_count / self.n_conceitos >= FRACAO_DOMINIO_ALVO
 
 
 # ─── Dados globais carregados na inicialização ────────────────────────────────
@@ -321,18 +353,6 @@ def _nivel_dificuldade(dif: float) -> str:
     return "Difícil"
 
 
-def _ler_prof_inicial(estudante_id: int) -> dict[int, float]:
-    prof = {cid: 0.0 for cid in _conceito_ids}
-    with Session(_engine) as s:
-        registros = list(
-            s.scalars(
-                select(EstadoAluno).where(EstadoAluno.estudante_id == estudante_id)
-            ).all()
-        )
-    for r in registros:
-        if r.conceito_id in prof:
-            prof[r.conceito_id] = float(r.proficiencia)
-    return prof
 
 
 def _get_sessao(token: str) -> SessaoAluno:
@@ -380,39 +400,71 @@ if os.path.isdir(FRONTEND_DIR):
 
 # ─── Rotas da API ─────────────────────────────────────────────────────────────
 
+def _abrir_sessao(estudante_id: int, nome: str) -> str:
+    """Cria a sessão de estudo (carrega o estado persistido) e retorna o token."""
+    token = str(uuid.uuid4())
+    _sessions[token] = SessaoAluno(estudante_id=estudante_id, nome=nome)
+    return token
+
+
 @app.post("/api/auth/login", response_model=LoginResponse)
 def login(body: LoginRequest) -> LoginResponse:
-    user = USUARIOS.get(body.username.lower())
-    if user is None or user["senha"] != body.password:
+    with Session(_engine) as db:
+        user = db.scalars(
+            select(Usuario).where(Usuario.username == body.username.strip().lower())
+        ).first()
+    if user is None or not verificar_senha(body.password, user.senha_hash):
         raise HTTPException(status_code=401, detail="Usuário ou senha inválidos.")
 
-    estudante_id = user["estudante_id"]
-    prof_inicial = _ler_prof_inicial(estudante_id)
-
-    token = str(uuid.uuid4())
-    sessao = SessaoAluno(
-        estudante_id=estudante_id,
-        nome=user["nome"],
-        conceito_ids=list(_conceito_ids),
-        conceito_nomes=dict(_conceito_nomes),
-        prof_inicial=prof_inicial,
-        dependentes_ids=dict(_dependentes_ids),
-        pre_requisitos_ids=dict(_pre_requisitos_ids),
-    )
-    _sessions[token] = sessao
-
+    # A sessão carrega proficiência + crença persistidas: o tutor RETOMA de onde
+    # o aluno parou (não reinicia a crença no prior a cada login).
+    token = _abrir_sessao(user.estudante_id, user.nome)
     return LoginResponse(
         token=token,
-        nome=user["nome"],
+        nome=user.nome,
+        estudante_id=user.estudante_id,
+        mensagem=f"Bem-vindo(a) de volta, {user.nome}! Sua trilha continua de onde parou.",
+    )
+
+
+@app.post("/api/auth/register", response_model=LoginResponse)
+def register(body: RegisterRequest) -> LoginResponse:
+    username = body.username.strip().lower()
+    if not username or not body.password:
+        raise HTTPException(status_code=400, detail="Usuário e senha são obrigatórios.")
+    if len(body.password) < 4:
+        raise HTTPException(status_code=400, detail="A senha deve ter ao menos 4 caracteres.")
+
+    with Session(_engine) as db:
+        if db.scalars(select(Usuario).where(Usuario.username == username)).first():
+            raise HTTPException(status_code=409, detail="Este usuário já existe.")
+        # Novo estudante_id = maior existente + 1 (aluno começa "do zero").
+        max_id = db.scalars(select(func.max(Usuario.estudante_id))).first() or 0
+        novo = Usuario(
+            username=username,
+            senha_hash=gerar_hash_senha(body.password),
+            nome=(body.nome.strip() or username.capitalize()),
+            estudante_id=max_id + 1,
+        )
+        db.add(novo)
+        db.commit()
+        estudante_id, nome_user = novo.estudante_id, novo.nome
+
+    token = _abrir_sessao(estudante_id, nome_user)
+    return LoginResponse(
+        token=token,
+        nome=nome_user,
         estudante_id=estudante_id,
-        mensagem=f"Bem-vindo(a), {user['nome']}! Sua trilha adaptativa está pronta.",
+        mensagem=f"Conta criada! Bem-vindo(a), {nome_user}. Sua trilha adaptativa começa agora.",
     )
 
 
 @app.post("/api/auth/logout")
 def logout(authorization: str = Header(default="")):
     token = authorization.replace("Bearer ", "")
-    _sessions.pop(token, None)
+    sessao = _sessions.pop(token, None)
+    if sessao is not None:
+        sessao.fechar()  # libera a conexão de banco do ambiente.
     return {"mensagem": "Sessão encerrada."}
 
 
@@ -422,18 +474,9 @@ def get_sessao(authorization: str = Header(default="")) -> SessaoResponse:
     sessao = _get_sessao(token)
 
     conceito_id = sessao.conceito_atual_id
-    nome = sessao.conceito_nomes[conceito_id]
     return SessaoResponse(
         estudante_id=sessao.estudante_id,
-        conceito_atual=ConceitoProficiencia(
-            id=conceito_id,
-            nome=nome,
-            nome_display=NOMES_DISPLAY.get(nome, nome),
-            proficiencia=round(sessao.prof_real[conceito_id], 4),
-            dominado=conceito_id in sessao.ja_dominados,
-            pre_requisitos=sessao.pre_requisitos_ids.get(conceito_id, []),
-            dependentes=sessao.dependentes_ids.get(conceito_id, []),
-        ),
+        conceito_atual=sessao.conceito_proficiencia(conceito_id),
         proficiencias=sessao.to_proficiencias(),
         passos=sessao.passos,
         fadiga=round(sessao.fadiga, 3),
@@ -456,8 +499,11 @@ def proxima_questao(authorization: str = Header(default="")) -> QuestaoResponse:
     # ŷ = média da crença (probabilidade esperada de acerto)
     prob_esperada = sessao._crenca_media(conceito_alvo_id)
 
-    # Busca questão com dificuldade ajustada à probabilidade esperada
-    dificuldade_alvo = 1.0 - prob_esperada  # questão calibrada para o nível do aluno
+    # Busca questão calibrada ao nível do aluno: a dificuldade-alvo ACOMPANHA a
+    # crença de acerto (quanto mais o aluno domina o conceito, mais difícil a
+    # questão — Zona de Desenvolvimento Proximal). Antes usava 1 - prob_esperada,
+    # que invertia (dava questão difícil a quem não dominava → frustração).
+    dificuldade_alvo = prob_esperada
     questao_data = _buscar_questao(conceito_alvo_id, dificuldade_alvo)
     if questao_data is None:
         raise HTTPException(status_code=404, detail=f"Nenhuma questão encontrada para o conceito {conceito_alvo_id}.")
@@ -505,57 +551,73 @@ def responder(body: ResponderRequest, authorization: str = Header(default="")) -
     conceito_id = pendente["conceito_alvo_id"]
     prob_esperada = pendente["prob_esperada"]
 
-    # Atualiza crença Bayesiana
+    # Estimativa do sistema (crença) ANTES de observar a resposta.
+    est_antes = sessao._crenca_media(conceito_id)
+
+    # Repassa a resposta REAL ao ambiente: atualiza a CRENÇA (o que o sistema
+    # estima sobre o aluno). A proficiência interna do simulador também é
+    # atualizada, mas NÃO é exibida ao aluno (é uma ficção para um aluno real).
     sessao._atualizar_crenca(conceito_id, acertou)
+    sessao._atualizar_proficiencia(conceito_id, acertou)
 
-    # Atualiza proficiência real
-    delta = sessao._atualizar_proficiencia(conceito_id, acertou)
+    est_depois = sessao._crenca_media(conceito_id)
+    delta_est = est_depois - est_antes
 
-    # Verifica domínio
-    if sessao.prof_real[conceito_id] >= LIMIAR_DOMINIO:
-        sessao.ja_dominados.add(conceito_id)
+    # Sinal observado (acerto − esperado): registrado só para analytics/treino
+    # futuro. NÃO é a recompensa do MDP (que depende da proficiência real oculta),
+    # por isso NÃO é exibido ao aluno.
+    sinal_observado = float(acertou) - prob_esperada
+    try:
+        with Session(_engine) as _db:
+            _db.add(
+                Interacao(
+                    estudante_id=sessao.estudante_id,
+                    questao_id=pendente["questao_id"],
+                    acao_rl=pendente["acao_rl"],
+                    prob_esperada=float(prob_esperada),
+                    resultado_real=int(acertou),
+                    recompensa=float(sinal_observado),
+                )
+            )
+            _db.commit()
+    except Exception as exc:  # pragma: no cover - log best-effort
+        print(f"[ITS] Falha ao registrar Interacao: {exc}")
 
-    # Recompensa simplificada (similar à função do ambiente)
-    recompensa = float(acertou) - prob_esperada
-
-    # Atualiza conceito atual (move para o conceito trabalhado)
+    # Move o foco para o conceito trabalhado; atualiza fadiga/passos.
     sessao.conceito_atual_id = conceito_id
-
-    # Fadiga e passos
     sessao.fadiga = min(1.0, sessao.fadiga + FADIGA_POR_PASSO)
     sessao.passos += 1
 
-    # Histórico da sessão
+    # Persiste estimativa (crença) + proficiência do conceito (retomável depois).
+    sessao.persistir(conceito_id)
+
     nome_conceito = sessao.conceito_nomes[conceito_id]
     sessao.historico.append({
         "passo": sessao.passos,
         "conceito": nome_conceito,
         "conceito_display": NOMES_DISPLAY.get(nome_conceito, nome_conceito),
         "acertou": acertou,
-        "recompensa": round(recompensa, 4),
-        "proficiencia_pos": round(sessao.prof_real[conceito_id], 4),
+        "estimativa_pos": round(est_depois, 4),
         "acao_rl": pendente["acao_rl"],
         "timestamp": datetime.utcnow().isoformat(),
     })
 
-    # Limpa questão pendente
     sessao.questao_pendente = None
 
-    mensagem = ""
     if acertou:
-        if delta > 0.05:
-            mensagem = "Excelente! Sua proficiência neste conceito aumentou significativamente."
+        if delta_est > 0.05:
+            mensagem = "Boa! O sistema aumentou a estimativa de que você domina este conceito."
         else:
-            mensagem = "Correto! Continue praticando para consolidar o conhecimento."
+            mensagem = "Correto! Continue praticando para consolidar."
     else:
         mensagem = f"Incorreto. A resposta correta era: {gabarito}. Não desanime!"
 
     return ResponderResponse(
         correto=acertou,
         gabarito=gabarito,
-        recompensa=round(recompensa, 4),
-        delta_proficiencia=round(delta, 4),
-        nova_proficiencia=round(sessao.prof_real[conceito_id], 4),
+        delta_estimativa=round(delta_est, 4),
+        nova_estimativa=round(est_depois, 4),
+        incerteza=round(sessao.incerteza(conceito_id), 4),
         conceito_nome=nome_conceito,
         conceito_display=NOMES_DISPLAY.get(nome_conceito, nome_conceito),
         mensagem=mensagem,
@@ -575,18 +637,15 @@ def desempenho(authorization: str = Header(default="")) -> DesempenhoResponse:
     total = len(hist)
     acertos = sum(1 for h in hist if h["acertou"])
     taxa = round(acertos / total, 4) if total > 0 else 0.0
-    recompensa_total = round(sum(h["recompensa"] for h in hist), 4)
 
     return DesempenhoResponse(
         total_questoes=total,
         total_acertos=acertos,
         taxa_acerto=taxa,
-        recompensa_total=recompensa_total,
         dominados=sessao.dominados_count,
         total_conceitos=sessao.n_conceitos,
         proficiencias=sessao.to_proficiencias(),
         historico=[HistoricoItem(**h) for h in hist],
-        recompensa_por_passo=[h["recompensa"] for h in hist],
         acertos_por_passo=[1 if h["acertou"] else 0 for h in hist],
     )
 
@@ -602,9 +661,9 @@ def conceitos(authorization: str = Header(default="")) -> list[dict]:
             "id": cid,
             "nome": nome,
             "nome_display": NOMES_DISPLAY.get(nome, nome),
-            "proficiencia": round(sessao.prof_real[cid], 4),
-            "crenca_media": round(sessao._crenca_media(cid), 4),
-            "dominado": sessao.prof_real[cid] >= LIMIAR_DOMINIO,
+            "proficiencia": round(sessao._crenca_media(cid), 4),   # estimativa
+            "incerteza": round(sessao.incerteza(cid), 4),
+            "dominado": sessao.estimado_dominado(cid),
             "pre_requisitos": sessao.pre_requisitos_ids.get(cid, []),
             "dependentes": sessao.dependentes_ids.get(cid, []),
         })

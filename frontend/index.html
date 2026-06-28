@@ -902,13 +902,14 @@
           </div>
         </div>
 
-        <div class="login-heading">Entrar na plataforma</div>
-        <div class="login-sub">Use suas credenciais para acessar sua vereda personalizada.</div>
+        <div class="login-heading" id="auth-heading">Entrar na plataforma</div>
+        <div class="login-sub" id="auth-sub">Use suas credenciais para acessar sua vereda personalizada.</div>
 
-        <div class="login-hint">
+        <div class="login-hint" id="auth-hint">
           <strong>Acesso demo:</strong> usuário <strong>aluno</strong> / senha <strong>enem2024</strong>
         </div>
 
+        <!-- LOGIN -->
         <form id="form-login" onsubmit="handleLogin(event)">
           <div class="form-field">
             <label class="form-label" for="inp-user">Usuário</label>
@@ -919,6 +920,29 @@
             <input class="form-input" id="inp-pass" type="password" placeholder="••••••••" autocomplete="current-password" required>
           </div>
           <button class="btn-primary" type="submit" id="btn-login">Entrar →</button>
+          <div style="margin-top:16px;font-size:13px;color:var(--c-muted);text-align:center">
+            Não tem conta? <a href="#" style="color:var(--c-forest);font-weight:600" onclick="setAuthMode('register');return false;">Criar agora</a>
+          </div>
+        </form>
+
+        <!-- CADASTRO -->
+        <form id="form-register" class="hidden" onsubmit="handleRegister(event)">
+          <div class="form-field">
+            <label class="form-label" for="reg-nome">Nome</label>
+            <input class="form-input" id="reg-nome" type="text" placeholder="Seu nome" autocomplete="name">
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="reg-user">Usuário</label>
+            <input class="form-input" id="reg-user" type="text" placeholder="escolha um usuário" autocomplete="username" required>
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="reg-pass">Senha</label>
+            <input class="form-input" id="reg-pass" type="password" placeholder="mínimo 4 caracteres" autocomplete="new-password" required>
+          </div>
+          <button class="btn-primary" type="submit" id="btn-register">Criar conta →</button>
+          <div style="margin-top:16px;font-size:13px;color:var(--c-muted);text-align:center">
+            Já tem conta? <a href="#" style="color:var(--c-forest);font-weight:600" onclick="setAuthMode('login');return false;">Entrar</a>
+          </div>
         </form>
       </div>
     </div>
@@ -980,12 +1004,12 @@
         <div class="summary-card">
           <div class="label">Conceitos dominados</div>
           <div class="value" id="stat-dom">0 / 12</div>
-          <div class="sub">proficiência ≥ 80%</div>
+          <div class="sub">estimativa ≥ 80%</div>
         </div>
         <div class="summary-card">
-          <div class="label">Recompensa total</div>
-          <div class="value" id="stat-reward">0.00</div>
-          <div class="sub">sinal do tutor DQN</div>
+          <div class="label">Confiança média</div>
+          <div class="value" id="stat-confianca">—</div>
+          <div class="sub">certeza das estimativas</div>
         </div>
       </div>
 
@@ -993,14 +1017,14 @@
       <div class="charts-row">
         <div class="chart-card">
           <div class="chart-title">Histórico de desempenho</div>
-          <div class="chart-sub">Acertos e recompensa por questão respondida</div>
+          <div class="chart-sub">Acertos por questão respondida</div>
           <div class="chart-wrap" style="height:220px">
             <canvas id="chart-historico"></canvas>
           </div>
         </div>
         <div class="chart-card">
-          <div class="chart-title">Proficiência por conceito</div>
-          <div class="chart-sub">Radar do estado atual de aprendizado</div>
+          <div class="chart-title">Estimativa por conceito</div>
+          <div class="chart-sub">Radar da estimativa de domínio do sistema</div>
           <div class="chart-wrap" style="height:220px">
             <canvas id="chart-radar"></canvas>
           </div>
@@ -1014,7 +1038,7 @@
           <div id="concept-bars">
             <div class="empty-state">
               <div class="es-icon">📊</div>
-              <p>Carregando proficiências...</p>
+              <p>Carregando estimativas...</p>
             </div>
           </div>
         </div>
@@ -1092,7 +1116,7 @@
               <div class="db-icon">🏆</div>
               <div class="db-text">
                 <div class="db-title">Conceito dominado!</div>
-                <div class="db-sub" id="dominio-conceito-text">Você alcançou proficiência ≥ 80% neste conceito.</div>
+                <div class="db-sub" id="dominio-conceito-text">O sistema estima que você domina este conceito (≥ 80%).</div>
               </div>
             </div>
           </div>
@@ -1236,6 +1260,39 @@ function showView(view) {
 /* ═══════════════════════════════════════════════════════════════
    LOGIN / LOGOUT
 ═══════════════════════════════════════════════════════════════ */
+// Alterna entre os formulários de login e cadastro.
+function setAuthMode(mode) {
+  const reg = mode === 'register';
+  document.getElementById('form-login').classList.toggle('hidden', reg);
+  document.getElementById('form-register').classList.toggle('hidden', !reg);
+  document.getElementById('auth-heading').textContent = reg ? 'Criar sua conta' : 'Entrar na plataforma';
+  document.getElementById('auth-sub').textContent = reg
+    ? 'Crie um login para começar sua vereda personalizada do zero.'
+    : 'Use suas credenciais para acessar sua vereda personalizada.';
+  document.getElementById('auth-hint').classList.toggle('hidden', reg);
+}
+
+// Aplica a sessão recebida (login OU cadastro) e entra no app.
+function aplicarSessao(data) {
+  state.token       = data.token;
+  state.nome        = data.nome;
+  state.estudanteId = data.estudante_id;
+  state.questaoAtual = null;
+  state.historico = [];
+  state.conceitos = null;
+  state.passos = state.acertos = 0;
+
+  document.getElementById('topbar-name').textContent = data.nome.split(' ')[0];
+  document.getElementById('topbar-avatar').textContent = data.nome.charAt(0).toUpperCase();
+
+  document.getElementById('page-login').classList.add('hidden');
+  document.getElementById('page-app').classList.remove('hidden');
+
+  showToast(data.mensagem, 'ok');
+  setView('dashboard');
+  loadDesempenho();
+}
+
 async function handleLogin(e) {
   e.preventDefault();
   const btn = document.getElementById('btn-login');
@@ -1244,35 +1301,42 @@ async function handleLogin(e) {
 
   btn.disabled = true;
   btn.textContent = 'Entrando…';
-
   try {
     const data = await apiFetch('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
       headers: { 'Content-Type': 'application/json' },
     });
-
-    state.token       = data.token;
-    state.nome        = data.nome;
-    state.estudanteId = data.estudante_id;
-
-    // Atualiza topbar
-    document.getElementById('topbar-name').textContent = data.nome.split(' ')[0];
-    document.getElementById('topbar-avatar').textContent = data.nome.charAt(0).toUpperCase();
-
-    // Troca de tela
-    document.getElementById('page-login').classList.add('hidden');
-    document.getElementById('page-app').classList.remove('hidden');
-
-    showToast(data.mensagem, 'ok');
-    setView('dashboard');
-    loadDesempenho();
-
+    aplicarSessao(data);
   } catch (err) {
     showToast(err.message, 'err');
   } finally {
     btn.disabled = false;
     btn.textContent = 'Entrar →';
+  }
+}
+
+async function handleRegister(e) {
+  e.preventDefault();
+  const btn = document.getElementById('btn-register');
+  const nome = document.getElementById('reg-nome').value.trim();
+  const username = document.getElementById('reg-user').value.trim();
+  const password = document.getElementById('reg-pass').value;
+
+  btn.disabled = true;
+  btn.textContent = 'Criando…';
+  try {
+    const data = await apiFetch('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ username, password, nome }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    aplicarSessao(data);
+  } catch (err) {
+    showToast(err.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Criar conta →';
   }
 }
 
@@ -1402,7 +1466,7 @@ async function submitAnswer() {
     state.historico.unshift({
       conceito: state.questaoAtual.conceito_display,
       acertou: result.correto,
-      proficiencia: result.nova_proficiencia,
+      estimativa: result.nova_estimativa,
       acao: state.questaoAtual.acao_rl,
     });
     state.passos = result.passos;
@@ -1412,11 +1476,11 @@ async function submitAnswer() {
 
     renderMiniHistorico();
 
-    // Banner de domínio
-    if (result.correto && result.nova_proficiencia >= 0.80) {
+    // Banner de domínio (estimado pelo sistema)
+    if (result.nova_estimativa >= 0.80) {
       const banner = document.getElementById('dominio-banner');
       document.getElementById('dominio-conceito-text').textContent =
-        `Você dominou "${result.conceito_display}" com ${Math.round(result.nova_proficiencia * 100)}% de proficiência!`;
+        `O sistema estima que você domina "${result.conceito_display}" (${Math.round(result.nova_estimativa * 100)}%)!`;
       banner.classList.remove('hidden');
     }
 
@@ -1460,17 +1524,15 @@ function showFeedback(result) {
   const icon  = result.correto ? '✓' : '✗';
   const cls   = result.correto ? 'correct' : 'wrong';
   const title = result.correto ? 'Resposta correta!' : `Resposta incorreta — gabarito: ${result.gabarito}`;
-  const recompensaTxt = result.recompensa >= 0
-    ? `+${result.recompensa.toFixed(3)}`
-    : result.recompensa.toFixed(3);
-  const profTxt = `${Math.round(result.nova_proficiencia * 100)}%`;
+  const estTxt  = `${Math.round(result.nova_estimativa * 100)}%`;
+  const confTxt = `${Math.round((1 - result.incerteza) * 100)}%`;
 
   box.innerHTML = `
     <div class="feedback-icon">${icon}</div>
     <div class="feedback-txt">
       <strong>${title}</strong>
-      Proficiência em <em>${result.conceito_display}</em>: <strong>${profTxt}</strong>
-      · Recompensa DQN: <strong>${recompensaTxt}</strong><br>
+      Estimativa de domínio em <em>${result.conceito_display}</em>: <strong>${estTxt}</strong>
+      · confiança do sistema: <strong>${confTxt}</strong><br>
       <span style="opacity:.8">${result.mensagem}</span>
     </div>
   `;
@@ -1539,7 +1601,7 @@ function renderMiniHistorico() {
     <div class="hist-item">
       <div class="hist-dot ${h.acertou ? 'ok' : 'err'}"></div>
       <div class="hist-text" title="${h.conceito}">${h.conceito}</div>
-      <div class="hist-pct">${Math.round(h.proficiencia * 100)}%</div>
+      <div class="hist-pct">${Math.round(h.estimativa * 100)}%</div>
     </div>
   `).join('');
 }
@@ -1581,7 +1643,11 @@ function renderSummaryCards(d) {
     ? `${d.total_acertos} de ${d.total_questoes} corretas`
     : 'aguardando dados';
   document.getElementById('stat-dom').textContent    = `${d.dominados} / ${d.total_conceitos}`;
-  document.getElementById('stat-reward').textContent = d.recompensa_total.toFixed(2);
+  // Confiança média = 1 − incerteza média das estimativas (quão "certo" o sistema está).
+  const cs = state.conceitos || [];
+  document.getElementById('stat-confianca').textContent = cs.length
+    ? Math.round(cs.reduce((s, c) => s + (1 - c.incerteza), 0) / cs.length * 100) + '%'
+    : '—';
 }
 
 function renderConceptBars(conceitos) {
@@ -1590,11 +1656,15 @@ function renderConceptBars(conceitos) {
   container.innerHTML = conceitos.map(c => {
     const pct = Math.round(c.proficiencia * 100);
     const dom = c.dominado;
+    // A opacidade da barra reflete a CONFIANÇA (1 − incerteza): estimativas com
+    // pouca evidência aparecem mais "apagadas".
+    const conf = 1 - (c.incerteza ?? 0);
+    const op = (0.35 + 0.65 * conf).toFixed(2);
     return `
       <div class="concept-item">
-        <div class="ci-name" title="${c.nome_display}">${c.nome_display}</div>
+        <div class="ci-name" title="${c.nome_display} · confiança ${Math.round(conf*100)}%">${c.nome_display}</div>
         <div class="ci-bar-wrap">
-          <div class="ci-bar-fill ${dom ? 'dominated' : ''}" style="width:${pct}%"></div>
+          <div class="ci-bar-fill ${dom ? 'dominated' : ''}" style="width:${pct}%;opacity:${op}"></div>
         </div>
         <div class="ci-pct">${pct}%</div>
         <div class="ci-badge ${dom ? 'dom' : 'ndom'}">${dom ? '✓' : '·'}</div>
@@ -1622,9 +1692,10 @@ function renderChartHistorico(d) {
   }
 
   const labels = d.historico.map((_, i) => `Q${i + 1}`);
-  const acertosCumul = [];
+  // Taxa de acerto acumulada (%) ao longo das questões.
+  const taxaCumul = [];
   let acc = 0;
-  d.acertos_por_passo.forEach(a => { acc += a; acertosCumul.push(acc); });
+  d.acertos_por_passo.forEach((a, i) => { acc += a; taxaCumul.push(Math.round(acc / (i + 1) * 100)); });
 
   state.chartHistorico = new Chart(ctx, {
     type: 'bar',
@@ -1632,7 +1703,7 @@ function renderChartHistorico(d) {
       labels,
       datasets: [
         {
-          label: 'Acerto',
+          label: 'Acerto (1) / erro (0)',
           data: d.acertos_por_passo,
           backgroundColor: d.acertos_por_passo.map(a => a ? 'rgba(47,143,107,.75)' : 'rgba(192,57,43,.55)'),
           borderRadius: 4,
@@ -1640,8 +1711,8 @@ function renderChartHistorico(d) {
         },
         {
           type: 'line',
-          label: 'Recompensa acum.',
-          data: d.recompensa_por_passo.reduce((acc, v, i) => { acc.push((acc[i-1] || 0) + v); return acc; }, []),
+          label: 'Taxa de acerto acum. (%)',
+          data: taxaCumul,
           borderColor: '#1f5e47',
           borderWidth: 2,
           pointRadius: 3,
@@ -1658,7 +1729,7 @@ function renderChartHistorico(d) {
       plugins: { legend: { display: true, labels: { boxWidth: 12, font: { size: 11 } } } },
       scales: {
         y:  { type: 'linear', position: 'left',  min: 0, max: 1, ticks: { stepSize: 1 }, grid: { color: '#eee' } },
-        y2: { type: 'linear', position: 'right', grid: { drawOnChartArea: false }, ticks: { font: { size: 10 } } },
+        y2: { type: 'linear', position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false }, ticks: { font: { size: 10 } } },
         x:  { ticks: { font: { size: 10 } }, grid: { display: false } },
       },
     },
@@ -1683,7 +1754,7 @@ function renderChartRadar(conceitos) {
     data: {
       labels,
       datasets: [{
-        label: 'Proficiência (%)',
+        label: 'Estimativa de domínio (%)',
         data: valores,
         backgroundColor: 'rgba(47,143,107,.18)',
         borderColor: '#2f8f6b',

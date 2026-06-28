@@ -27,10 +27,11 @@ sustenta os três pilares da modelagem de Aprendizado por Reforço:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import random
-
-import json
+import secrets
 
 from sqlalchemy import (
     Float,
@@ -150,6 +151,10 @@ class EstadoAluno(Base):
       - Proficiência por conceito (esta tabela),
       - Histórico de acertos recentes,
       - Contexto da sessão (fadiga).
+
+    PERSISTÊNCIA LONGITUDINAL: além da proficiência, guarda a CRENÇA Bayesiana
+    Beta(alpha, beta) por conceito. Assim, ao reabrir a sessão, o tutor RETOMA o
+    que sabia sobre o aluno (em vez de reiniciar a crença no prior a cada login).
     """
     __tablename__ = "estado_aluno"
 
@@ -159,6 +164,9 @@ class EstadoAluno(Base):
         ForeignKey("conceito.id"), nullable=False
     )
     proficiencia: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Crença Bayesiana persistida (prior padrão = Beta(1, 1), uniforme).
+    alpha: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    beta: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
 
     conceito: Mapped["Conceito"] = relationship("Conceito")
 
@@ -167,6 +175,30 @@ class EstadoAluno(Base):
             f"<EstadoAluno estudante={self.estudante_id} "
             f"conceito_id={self.conceito_id} prof={self.proficiencia:.2f}>"
         )
+
+
+class Usuario(Base):
+    """
+    Conta de usuário (aluno) com autenticação real.
+
+    A senha é guardada como HASH (PBKDF2-HMAC-SHA256 salgado), nunca em texto
+    puro. Cada usuário tem um `estudante_id` próprio, que liga a conta ao seu
+    estado de aprendizado (EstadoAluno/Interacao).
+    """
+    __tablename__ = "usuario"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(
+        String(80), unique=True, nullable=False, index=True
+    )
+    senha_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    nome: Mapped[str] = mapped_column(String(120), nullable=False)
+    estudante_id: Mapped[int] = mapped_column(
+        Integer, unique=True, nullable=False, index=True
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Usuario {self.username!r} estudante_id={self.estudante_id}>"
 
 
 class Interacao(Base):
@@ -490,6 +522,44 @@ def _gerar_banco_questoes(conceitos: dict[str, Conceito]) -> list[Questao]:
     return questoes
 
 
+# ---------------------------------------------------------------------------- #
+# Autenticação — hash de senha (PBKDF2-HMAC-SHA256 salgado, stdlib)
+# ---------------------------------------------------------------------------- #
+_PBKDF2_ITERACOES = 200_000
+
+
+def gerar_hash_senha(senha: str) -> str:
+    """Gera o hash salgado: 'pbkdf2$<iterações>$<salt_hex>$<hash_hex>'."""
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac(
+        "sha256", senha.encode("utf-8"), salt, _PBKDF2_ITERACOES
+    )
+    return f"pbkdf2${_PBKDF2_ITERACOES}${salt.hex()}${dk.hex()}"
+
+
+def verificar_senha(senha: str, senha_hash: str) -> bool:
+    """Confere a senha contra o hash (comparação em tempo constante)."""
+    try:
+        algo, iteracoes, salt_hex, hash_hex = senha_hash.split("$")
+        if algo != "pbkdf2":
+            return False
+        dk = hashlib.pbkdf2_hmac(
+            "sha256", senha.encode("utf-8"), bytes.fromhex(salt_hex), int(iteracoes)
+        )
+        return secrets.compare_digest(dk.hex(), hash_hex)
+    except (ValueError, TypeError):
+        return False
+
+
+# Usuários de demonstração criados no seed (username, senha, nome, estudante_id).
+# 'aluno' usa o perfil seedado (estudante 1); os demais começam "do zero".
+USUARIOS_DEMO = [
+    ("aluno", "enem2024", "Ana Beatriz Silva", 1),
+    ("demo", "demo", "Aluno Demo", 2),
+    ("admin", "admin", "Administrador", 3),
+]
+
+
 def _calcular_recompensa(resultado_real: int, prob_esperada: float) -> float:
     """Recompensa dinâmica do RL: R_t = y - ŷ.
 
@@ -565,12 +635,19 @@ def criar_banco_e_popular(reset: bool = True) -> None:
             "Geometria_Posicao": 0.10,
             "Volumes_Areas_Espacial": 0.05,
         }
+        # Crença inicial INFORMADA pela proficiência (como um "nivelamento"):
+        # contagens pseudo-Beta com N efetivo modesto, então a estimativa começa
+        # coerente com o perfil do aluno, mas ainda com alguma incerteza.
+        # (Não afeta o treino, que reseta a crença ao prior (1,1) a cada episódio.)
+        N_PSEUDO = 4.0
         for nome, prof in proficiencias_iniciais.items():
             session.add(
                 EstadoAluno(
                     estudante_id=ESTUDANTE_TESTE_ID,
                     conceito_id=conceitos[nome].id,
                     proficiencia=prof,
+                    alpha=1.0 + N_PSEUDO * prof,
+                    beta=1.0 + N_PSEUDO * (1.0 - prof),
                 )
             )
         session.flush()
@@ -605,12 +682,24 @@ def criar_banco_e_popular(reset: bool = True) -> None:
             )
         )
 
+        # Usuários de demonstração (senha em hash). Cada um com seu estudante_id.
+        for username, senha, nome_user, est_id in USUARIOS_DEMO:
+            session.add(
+                Usuario(
+                    username=username,
+                    senha_hash=gerar_hash_senha(senha),
+                    nome=nome_user,
+                    estudante_id=est_id,
+                )
+            )
+
         session.commit()
 
         # Resumo informativo do seed.
         total_conceitos = len(session.scalars(select(Conceito)).all())
         print("Banco criado e populado com sucesso.")
         print(f"  - Conceitos (nós do DAG): {total_conceitos}")
+        print(f"  - Usuários demo: {len(USUARIOS_DEMO)} ({', '.join(u[0] for u in USUARIOS_DEMO)})")
         print(
             f"  - Questões: {len(questoes)} "
             f"({len(DIFICULDADE_BASE)} conceitos × {len(NIVEIS)} níveis × "

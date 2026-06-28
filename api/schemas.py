@@ -17,6 +17,12 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    nome: str = ""
+
+
 class LoginResponse(BaseModel):
     token: str
     nome: str
@@ -30,8 +36,9 @@ class ConceitoProficiencia(BaseModel):
     id: int
     nome: str
     nome_display: str
-    proficiencia: float
-    dominado: bool
+    proficiencia: float       # ESTIMATIVA (média da crença) — não a verdade oculta
+    incerteza: float          # incerteza da estimativa em [0,1] (1 = sem evidência)
+    dominado: bool            # estimativa >= limiar de domínio
     pre_requisitos: list[int]
     dependentes: list[int]
 
@@ -72,9 +79,9 @@ class ResponderRequest(BaseModel):
 class ResponderResponse(BaseModel):
     correto: bool
     gabarito: str
-    recompensa: float
-    delta_proficiencia: float
-    nova_proficiencia: float
+    delta_estimativa: float    # variação da ESTIMATIVA (crença) após a resposta
+    nova_estimativa: float     # estimativa de domínio atual do conceito
+    incerteza: float           # incerteza da estimativa em [0,1]
     conceito_nome: str
     conceito_display: str
     mensagem: str
@@ -91,8 +98,7 @@ class HistoricoItem(BaseModel):
     conceito: str
     conceito_display: str
     acertou: bool
-    recompensa: float
-    proficiencia_pos: float
+    estimativa_pos: float      # estimativa de domínio após a resposta
     acao_rl: str
     timestamp: str
 
@@ -101,10 +107,8 @@ class DesempenhoResponse(BaseModel):
     total_questoes: int
     total_acertos: int
     taxa_acerto: float
-    recompensa_total: float
     dominados: int
     total_conceitos: int
     proficiencias: list[ConceitoProficiencia]
     historico: list[HistoricoItem]
-    recompensa_por_passo: list[float]
     acertos_por_passo: list[int]  # 1 = acerto, 0 = erro
