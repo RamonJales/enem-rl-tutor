@@ -1,0 +1,22 @@
+# Dependências do Sistema Tutor Inteligente (ITS) baseado em Deep RL (DQN)
+
+# Núcleo de Aprendizado por Reforço Profundo: rede neural que aproxima a função Q(s, a)
+torch
+
+# Álgebra vetorial: representação do Estado (S) contínuo como numpy array para a Q-Network
+numpy
+
+# Visualização: gera o gráfico de curva de aprendizado (Recompensa vs. Episódios)
+matplotlib
+
+# Camada de API: expõe o agente Tutor como serviço HTTP
+fastapi
+
+# Servidor ASGI para rodar a aplicação FastAPI
+uvicorn
+
+# ORM (SQLAlchemy 2.0) para persistir Grafo de Conhecimento, Estados e o Experience Replay
+sqlalchemy
+
+# Validação de schemas de entrada/saída (Estado -> Ação Pedagógica)
+pydantic

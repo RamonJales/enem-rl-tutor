@@ -1,0 +1,1838 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vereda — ITS ENEM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Source+Serif+4:ital,wght@0,400;0,600;1,400;1,500&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <style>
+    /* ── Reset & Base ──────────────────────────────────────────────── */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --c-forest:   #1f4a38;
+      --c-green:    #2c6a4f;
+      --c-mint:     #4db88a;
+      --c-pale:     #e8f5ef;
+      --c-amber:    #d49a3c;
+      --c-text:     #1b241f;
+      --c-muted:    #5c6168;
+      --c-subtle:   #9aa0a7;
+      --c-border:   #dde2e9;
+      --c-bg:       #f7f8fa;
+      --c-card:     #ffffff;
+      --c-error:    #c0392b;
+      --c-warn:     #e67e22;
+      --c-ok:       #27ae60;
+      --font-brand: 'Fraunces', Georgia, serif;
+      --radius-sm:  8px;
+      --radius-md:  14px;
+      --radius-lg:  20px;
+      --shadow-sm:  0 2px 8px rgba(31,94,71,.08);
+      --shadow-md:  0 8px 30px rgba(31,94,71,.12);
+      --shadow-lg:  0 18px 50px rgba(40,60,90,.13);
+      --font-sans:  'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-serif: 'Source Serif 4', Georgia, serif;
+    }
+    html, body { height: 100%; font-family: var(--font-sans); color: var(--c-text); background: var(--c-bg); }
+
+    /* ── Utilitários ────────────────────────────────────────────────── */
+    .hidden { display: none !important; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+    button { font-family: var(--font-sans); cursor: pointer; border: none; }
+    input  { font-family: var(--font-sans); }
+
+    /* ── Toast de notificação ───────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+      background: var(--c-text); color: #fff;
+      padding: 12px 20px; border-radius: var(--radius-sm);
+      font-size: 14px; font-weight: 500;
+      box-shadow: var(--shadow-md);
+      transition: opacity .25s, transform .25s;
+      opacity: 0; transform: translateY(8px); pointer-events: none;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast.ok   { background: var(--c-ok); }
+    #toast.err  { background: var(--c-error); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       PÁGINA DE LOGIN
+    ══════════════════════════════════════════════════════════════════ */
+    #page-login {
+      min-height: 100vh;
+      display: flex;
+      background: var(--c-forest);
+      position: relative;
+      overflow: hidden;
+    }
+    /* Fundo decorativo — aura verde sutil */
+    #page-login::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse 70% 70% at 80% 20%, rgba(47,143,107,.35), transparent 65%),
+                  radial-gradient(ellipse 50% 50% at 10% 80%, rgba(47,143,107,.20), transparent 60%);
+      pointer-events: none;
+    }
+    .login-split {
+      display: flex;
+      width: 100%;
+      position: relative;
+      z-index: 1;
+    }
+    /* Coluna esquerda: identidade */
+    .login-brand {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 60px 64px;
+      color: #fff;
+    }
+    .login-brand .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255,255,255,.12);
+      color: rgba(255,255,255,.85);
+      border: 1px solid rgba(255,255,255,.2);
+      border-radius: 999px;
+      padding: 6px 16px;
+      font-size: 11.5px;
+      font-weight: 600;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin-bottom: 36px;
+      width: fit-content;
+    }
+    .login-brand h1 {
+      font-family: var(--font-serif);
+      font-size: 42px;
+      font-weight: 600;
+      line-height: 1.12;
+      letter-spacing: -.018em;
+      margin-bottom: 20px;
+      max-width: 480px;
+    }
+    .login-brand h1 em { font-style: italic; font-weight: 500; }
+    .login-brand p {
+      font-size: 16px;
+      color: rgba(255,255,255,.72);
+      line-height: 1.65;
+      max-width: 400px;
+    }
+    /* Logo hero na landing */
+    .login-hero-logo {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      margin-bottom: 36px;
+    }
+    .login-hero-wordmark {
+      font-family: var(--font-brand);
+      font-size: 38px;
+      font-weight: 500;
+      color: #fff;
+      letter-spacing: -.01em;
+    }
+
+    .login-stats {
+      display: flex;
+      gap: 36px;
+      margin-top: 52px;
+    }
+    .login-stat-item { }
+    .login-stat-item .val {
+      font-size: 28px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -.02em;
+    }
+    .login-stat-item .lbl {
+      font-size: 12px;
+      color: rgba(255,255,255,.55);
+      margin-top: 2px;
+    }
+
+    /* Coluna direita: formulário */
+    .login-form-col {
+      width: 480px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+      background: var(--c-bg);
+    }
+    .login-card {
+      width: 100%;
+      max-width: 380px;
+    }
+    .login-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 36px;
+    }
+    .logo-icon {
+      width: 44px; height: 44px;
+      background: var(--c-forest);
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .logo-icon svg { width: 24px; height: 24px; }
+    .logo-text { }
+    .logo-text .name { font-family: var(--font-brand); font-size: 17px; font-weight: 500; color: var(--c-text); letter-spacing: -.01em; }
+    .logo-text .sub  { font-size: 11.5px; color: var(--c-muted); margin-top: 1px; }
+
+    .login-heading { font-size: 22px; font-weight: 700; color: var(--c-text); margin-bottom: 6px; }
+    .login-sub     { font-size: 13.5px; color: var(--c-muted); margin-bottom: 30px; }
+
+    .form-field { margin-bottom: 18px; }
+    .form-label {
+      display: block;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--c-muted);
+      margin-bottom: 7px;
+      letter-spacing: .03em;
+    }
+    .form-input {
+      width: 100%;
+      padding: 11px 14px;
+      border: 1.5px solid var(--c-border);
+      border-radius: var(--radius-sm);
+      font-size: 14px;
+      color: var(--c-text);
+      background: #fff;
+      outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .form-input:focus {
+      border-color: var(--c-green);
+      box-shadow: 0 0 0 3px rgba(47,143,107,.12);
+    }
+    .login-hint {
+      font-size: 11.5px;
+      color: var(--c-subtle);
+      background: var(--c-pale);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      margin-bottom: 22px;
+      line-height: 1.5;
+    }
+    .login-hint strong { color: var(--c-forest); }
+    .btn-primary {
+      width: 100%;
+      padding: 13px;
+      background: var(--c-forest);
+      color: #fff;
+      border-radius: var(--radius-sm);
+      font-size: 14.5px;
+      font-weight: 600;
+      transition: filter .15s, transform .1s;
+    }
+    .btn-primary:hover  { filter: brightness(1.1); }
+    .btn-primary:active { transform: scale(.98); }
+    .btn-primary:disabled { opacity: .6; cursor: not-allowed; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       SHELL DO APP (após login)
+    ══════════════════════════════════════════════════════════════════ */
+    #page-app {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    /* ── Topbar ──────────────────────────────────────────────────────── */
+    .topbar {
+      height: 58px;
+      background: var(--c-forest);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 28px;
+      position: sticky; top: 0; z-index: 100;
+      box-shadow: 0 2px 12px rgba(0,0,0,.15);
+    }
+    .topbar-left { display: flex; align-items: center; gap: 14px; }
+    .topbar-logo {
+      width: 32px; height: 32px;
+      background: rgba(255,255,255,.15);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .topbar-logo svg { width: 18px; height: 18px; }
+    .topbar-title { font-family: var(--font-brand); font-size: 18px; font-weight: 500; color: #fff; letter-spacing: -.01em; }
+
+    .topbar-nav { display: flex; gap: 4px; }
+    .nav-btn {
+      padding: 6px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: rgba(255,255,255,.7);
+      background: transparent;
+      transition: background .15s, color .15s;
+    }
+    .nav-btn:hover { background: rgba(255,255,255,.12); color: #fff; }
+    .nav-btn.active { background: rgba(255,255,255,.18); color: #fff; }
+
+    .topbar-right { display: flex; align-items: center; gap: 14px; }
+    .topbar-user {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+    .topbar-avatar {
+      width: 30px; height: 30px;
+      background: var(--c-green);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700; color: #fff;
+    }
+    .topbar-name { font-size: 13px; font-weight: 600; color: rgba(255,255,255,.85); }
+    .btn-logout {
+      padding: 5px 14px;
+      border-radius: 7px;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: rgba(255,255,255,.65);
+      background: rgba(255,255,255,.1);
+      transition: background .15s, color .15s;
+    }
+    .btn-logout:hover { background: rgba(255,255,255,.18); color: #fff; }
+
+    /* ── Layout principal ────────────────────────────────────────────── */
+    .app-body {
+      flex: 1;
+      max-width: 1200px;
+      margin: 0 auto;
+      width: 100%;
+      padding: 32px 28px;
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       PAINEL (DASHBOARD)
+    ══════════════════════════════════════════════════════════════════ */
+    #view-dashboard { }
+
+    .section-title {
+      font-family: var(--font-serif);
+      font-size: 24px;
+      font-weight: 600;
+      color: var(--c-text);
+      margin-bottom: 4px;
+    }
+    .section-sub { font-size: 14px; color: var(--c-muted); margin-bottom: 28px; }
+
+    /* Cards de resumo */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+    .summary-card {
+      background: var(--c-card);
+      border: 1px solid var(--c-border);
+      border-radius: var(--radius-md);
+      padding: 20px 22px;
+      box-shadow: var(--shadow-sm);
+    }
+    .summary-card .label {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--c-muted);
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .summary-card .value {
+      font-size: 30px;
+      font-weight: 700;
+      color: var(--c-text);
+      letter-spacing: -.025em;
+      line-height: 1;
+    }
+    .summary-card .sub {
+      font-size: 12px;
+      color: var(--c-subtle);
+      margin-top: 6px;
+    }
+    .summary-card.highlight { background: var(--c-forest); border-color: var(--c-forest); }
+    .summary-card.highlight .label { color: rgba(255,255,255,.65); }
+    .summary-card.highlight .value { color: #fff; }
+    .summary-card.highlight .sub   { color: rgba(255,255,255,.55); }
+
+    /* Gráficos */
+    .charts-row {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+    .chart-card {
+      background: var(--c-card);
+      border: 1px solid var(--c-border);
+      border-radius: var(--radius-md);
+      padding: 22px 24px;
+      box-shadow: var(--shadow-sm);
+    }
+    .chart-card .chart-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--c-text);
+      margin-bottom: 4px;
+    }
+    .chart-card .chart-sub {
+      font-size: 12px;
+      color: var(--c-muted);
+      margin-bottom: 18px;
+    }
+    .chart-wrap { position: relative; }
+
+    /* Grafo de conceitos */
+    .concepts-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+    .concept-list {
+      background: var(--c-card);
+      border: 1px solid var(--c-border);
+      border-radius: var(--radius-md);
+      padding: 22px 24px;
+      box-shadow: var(--shadow-sm);
+    }
+    .concept-list .chart-title { font-size: 14px; font-weight: 700; color: var(--c-text); margin-bottom: 18px; }
+    .concept-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--c-border);
+    }
+    .concept-item:last-child { border-bottom: none; }
+    .concept-item .ci-name { flex: 1; font-size: 13px; font-weight: 500; color: var(--c-text); }
+    .concept-item .ci-bar-wrap {
+      flex: 1.2;
+      height: 6px;
+      background: var(--c-border);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .concept-item .ci-bar-fill {
+      height: 100%;
+      background: var(--c-green);
+      border-radius: 99px;
+      transition: width .5s ease;
+    }
+    .concept-item .ci-bar-fill.dominated { background: var(--c-forest); }
+    .concept-item .ci-pct {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--c-muted);
+      min-width: 34px;
+      text-align: right;
+    }
+    .concept-item .ci-badge {
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      font-size: 10px;
+    }
+    .ci-badge.dom  { background: var(--c-pale); color: var(--c-forest); }
+    .ci-badge.ndom { background: #f0f0f0; color: var(--c-subtle); }
+
+    /* DAG visual */
+    .dag-card {
+      background: var(--c-card);
+      border: 1px solid var(--c-border);
+      border-radius: var(--radius-md);
+      padding: 22px 24px;
+      box-shadow: var(--shadow-sm);
+    }
+    .dag-card .chart-title { font-size: 14px; font-weight: 700; color: var(--c-text); margin-bottom: 4px; }
+    .dag-card .chart-sub   { font-size: 12px; color: var(--c-muted); margin-bottom: 16px; }
+    #dag-svg { width: 100%; height: 280px; }
+    .dag-node { cursor: default; }
+    .dag-node rect { rx: 8; }
+    .dag-label { font-family: var(--font-sans); font-size: 10.5px; pointer-events: none; }
+
+    /* Estado vazio */
+    .empty-state {
+      text-align: center;
+      padding: 48px 24px;
+      color: var(--c-muted);
+    }
+    .empty-state .es-icon {
+      font-size: 40px;
+      margin-bottom: 14px;
+      opacity: .4;
+    }
+    .empty-state p { font-size: 13.5px; line-height: 1.6; }
+    .btn-go-trilha {
+      display: inline-block;
+      margin-top: 18px;
+      padding: 11px 24px;
+      background: var(--c-forest);
+      color: #fff;
+      border-radius: var(--radius-sm);
+      font-size: 13.5px;
+      font-weight: 600;
+      transition: filter .15s;
+    }
+    .btn-go-trilha:hover { filter: brightness(1.1); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       TRILHA (QUIZ)
+    ══════════════════════════════════════════════════════════════════ */
+    #view-trilha { }
+
+    .trilha-layout {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 24px;
+      align-items: start;
+    }
+
+    /* Painel principal da questão */
+    .quiz-panel {
+      background: var(--c-card);
+      border: 1px solid var(--c-border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+
+    /* Cabeçalho da questão */
+    .quiz-header {
+      background: var(--c-forest);
+      padding: 22px 28px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .quiz-concept-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255,255,255,.15);
+      color: #fff;
+      border-radius: 999px;
+      padding: 5px 14px 5px 8px;
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+    .quiz-concept-pill .dot {
+      width: 8px; height: 8px;
+      background: var(--c-mint);
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .quiz-acao-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 5px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .04em;
+    }
+    .quiz-acao-pill.avancar  { background: rgba(77,184,138,.25); color: #a8f0d0; }
+    .quiz-acao-pill.reforcar { background: rgba(255,200,80,.20); color: #ffe08a; }
+    .quiz-acao-pill.remediar { background: rgba(255,120,80,.20); color: #ffa07a; }
+
+    .quiz-header-right { margin-left: auto; text-align: right; }
+    .quiz-nivel {
+      font-size: 11px;
+      font-weight: 700;
+      color: rgba(255,255,255,.6);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .quiz-prob {
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+      margin-top: 2px;
+    }
+    .quiz-prob-label { font-size: 10.5px; color: rgba(255,255,255,.5); }
+
+    /* Corpo da questão */
+    .quiz-body { padding: 32px 32px 28px; }
+
+    .quiz-step-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--c-muted);
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+
+    .quiz-enunciado {
+      font-family: var(--font-serif);
+      font-size: 19px;
+      line-height: 1.58;
+      color: var(--c-text);
+      margin-bottom: 32px;
+    }
+
+    /* Alternativas objetivas */
+    .answer-section { }
+    .answer-label {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--c-muted);
+      letter-spacing: .04em;
+      margin-bottom: 12px;
+    }
+    .alternatives-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+    .alt-btn {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      padding: 13px 16px;
+      border: 1.5px solid var(--c-border);
+      border-radius: var(--radius-sm);
+      background: var(--c-bg);
+      cursor: pointer;
+      text-align: left;
+      transition: border-color .15s, background .15s, transform .1s, box-shadow .15s;
+      font-size: 14px;
+      color: var(--c-text);
+      font-family: var(--font-sans);
+      font-weight: 500;
+      line-height: 1.4;
+    }
+    .alt-btn:hover:not(:disabled) {
+      border-color: var(--c-green);
+      background: #fff;
+      box-shadow: 0 0 0 3px rgba(47,143,107,.10);
+    }
+    .alt-btn:active:not(:disabled) { transform: scale(.98); }
+    .alt-btn.selected {
+      border-color: var(--c-green);
+      background: #fff;
+      box-shadow: 0 0 0 3px rgba(47,143,107,.12);
+    }
+    .alt-btn.correct {
+      border-color: var(--c-ok);
+      background: #e8f8ef;
+      color: #1a5e38;
+    }
+    .alt-btn.wrong {
+      border-color: var(--c-error);
+      background: #fdf0ee;
+      color: #6b1a1a;
+    }
+    .alt-btn.dimmed {
+      opacity: .45;
+    }
+    .alt-btn:disabled { cursor: default; }
+    .alt-letter {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12.5px;
+      font-weight: 800;
+      flex-shrink: 0;
+      background: var(--c-border);
+      color: var(--c-muted);
+      transition: background .15s, color .15s;
+      letter-spacing: 0;
+    }
+    .alt-btn.selected .alt-letter { background: var(--c-green); color: #fff; }
+    .alt-btn.correct  .alt-letter { background: var(--c-ok);    color: #fff; }
+    .alt-btn.wrong    .alt-letter { background: var(--c-error);  color: #fff; }
+    .alt-text { flex: 1; }
+
+    /* Feedback */
+    .feedback-box {
+      border-radius: var(--radius-sm);
+      padding: 14px 18px;
+      margin-bottom: 22px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      font-size: 13.5px;
+      line-height: 1.5;
+    }
+    .feedback-box.correct  { background: #e8f8ef; border: 1px solid #b2dfcb; color: #1a5e38; }
+    .feedback-box.wrong    { background: #fdf0ee; border: 1px solid #f5c0b8; color: #6b1a1a; }
+    .feedback-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+    .feedback-txt  { }
+    .feedback-txt strong { display: block; font-weight: 700; margin-bottom: 3px; }
+
+    /* Botões ação */
+    .quiz-actions { display: flex; gap: 12px; align-items: center; }
+    .btn-submit {
+      flex: 1;
+      padding: 13px;
+      background: var(--c-forest);
+      color: #fff;
+      border-radius: var(--radius-sm);
+      font-size: 14px;
+      font-weight: 700;
+      transition: filter .15s;
+    }
+    .btn-submit:hover { filter: brightness(1.1); }
+    .btn-submit:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-next {
+      flex: 1;
+      padding: 13px;
+      background: var(--c-green);
+      color: #fff;
+      border-radius: var(--radius-sm);
+      font-size: 14px;
+      font-weight: 700;
+      transition: filter .15s;
+    }
+    .btn-next:hover { filter: brightness(1.08); }
+
+    /* Progresso */
+    .quiz-progress {
+      height: 4px;
+      background: var(--c-border);
+      border-radius: 999px;
+      margin-top: 24px;
+      overflow: hidden;
+    }
+    .quiz-progress-fill {
+      height: 100%;
+      background: var(--c-mint);
+      border-radius: 999px;
+      transition: width .5s ease;
+    }
+
+    /* Painel lateral da trilha */
+    .quiz-sidebar { display: flex; flex-direction: column; gap: 16px; }
+
+    .sidebar-card {
+      background: var(--c-card);
+      border: 1px solid var(--c-border);
+      border-radius: var(--radius-md);
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+    }
+    .sidebar-card .sc-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--c-muted);
+      letter-spacing: .07em;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+
+    /* Mini proficiência sidebar */
+    .mini-concept {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 0;
+      border-bottom: 1px solid var(--c-border);
+    }
+    .mini-concept:last-child { border-bottom: none; }
+    .mini-concept.active .mc-name { color: var(--c-forest); font-weight: 700; }
+    .mini-concept .mc-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--c-border);
+      flex-shrink: 0;
+    }
+    .mini-concept.active .mc-dot { background: var(--c-green); }
+    .mini-concept .mc-name { font-size: 12px; color: var(--c-muted); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mini-concept .mc-pct { font-size: 11px; font-weight: 700; color: var(--c-subtle); min-width: 30px; text-align: right; }
+
+    /* Sessão stats */
+    .stat-row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid var(--c-border); }
+    .stat-row:last-child { border-bottom: none; }
+    .stat-row .sr-label { font-size: 12px; color: var(--c-muted); }
+    .stat-row .sr-val   { font-size: 12px; font-weight: 700; color: var(--c-text); }
+
+    /* Fadiga bar */
+    .fadiga-bar {
+      height: 5px;
+      background: var(--c-border);
+      border-radius: 999px;
+      margin-top: 8px;
+      overflow: hidden;
+    }
+    .fadiga-fill {
+      height: 100%;
+      background: var(--c-warn);
+      border-radius: 999px;
+      transition: width .5s;
+    }
+    .fadiga-fill.low { background: var(--c-ok); }
+
+    /* Histórico mini */
+    .hist-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--c-border);
+    }
+    .hist-item:last-child { border-bottom: none; }
+    .hist-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .hist-dot.ok  { background: var(--c-ok); }
+    .hist-dot.err { background: var(--c-error); }
+    .hist-text { font-size: 11.5px; color: var(--c-muted); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hist-pct  { font-size: 11px; font-weight: 600; color: var(--c-subtle); }
+
+    /* Celebração de domínio */
+    .dominio-banner {
+      background: linear-gradient(135deg, var(--c-forest), var(--c-green));
+      color: #fff;
+      border-radius: var(--radius-md);
+      padding: 18px 22px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      animation: pulse-green .5s ease;
+    }
+    .dominio-banner .db-icon { font-size: 28px; flex-shrink: 0; }
+    .dominio-banner .db-text .db-title { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+    .dominio-banner .db-text .db-sub   { font-size: 12px; color: rgba(255,255,255,.75); }
+
+    @keyframes pulse-green {
+      0%   { transform: scale(.96); }
+      60%  { transform: scale(1.02); }
+      100% { transform: scale(1); }
+    }
+    @keyframes floaty {
+      0%, 100% { transform: translateY(0); }
+      50%       { transform: translateY(-6px); }
+    }
+
+    /* ── Responsive ──────────────────────────────────────────────────── */
+    @media (max-width: 960px) {
+      .login-split { flex-direction: column; }
+      .login-brand { padding: 40px 32px 28px; }
+      .login-form-col { width: 100%; padding: 32px 24px; }
+      .summary-grid { grid-template-columns: repeat(2,1fr); }
+      .charts-row, .concepts-row { grid-template-columns: 1fr; }
+      .trilha-layout { grid-template-columns: 1fr; }
+      .quiz-sidebar { display: none; }
+    }
+    @media (max-width: 600px) {
+      .summary-grid { grid-template-columns: 1fr 1fr; }
+      .topbar-nav .nav-btn { padding: 6px 10px; font-size: 12px; }
+      .app-body { padding: 20px 16px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════
+     PÁGINA DE LOGIN
+════════════════════════════════════════════════════════ -->
+<div id="page-login">
+  <div class="login-split">
+    <!-- Identidade / brand -->
+    <div class="login-brand">
+      <!-- Logo hero -->
+      <div class="login-hero-logo">
+        <svg width="64" height="64" viewBox="0 0 100 100" fill="none">
+          <path d="M20 34 L45 61 Q50 68 55 61 L80 34" stroke="#F4F1E8" stroke-width="6" stroke-linecap="round"/>
+          <path d="M31 36 L46.5 55 Q50 60 53.5 55 L69 36" stroke="#F4F1E8" stroke-width="6" stroke-linecap="round" opacity=".82"/>
+          <path d="M42 38 L48 49 Q50 53 52 49 L58 38" stroke="#F4F1E8" stroke-width="6" stroke-linecap="round" opacity=".64"/>
+          <circle cx="50" cy="63" r="4.5" fill="#D49A3C"/>
+        </svg>
+        <span class="login-hero-wordmark">Vereda</span>
+      </div>
+
+      <div class="badge">
+        <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="rgba(255,255,255,.7)"/></svg>
+        Modelo Aberto do Aluno
+      </div>
+      <h1>A maioria das plataformas é uma caixa‑preta.<br><em>A Vereda deixa você ver por dentro.</em></h1>
+      <p>Em vez de só mandar "faça esta questão", a Vereda mostra o seu estado de aprendizado e explica cada recomendação do tutor inteligente.</p>
+      <div class="login-stats">
+        <div class="login-stat-item">
+          <div class="val">180</div>
+          <div class="lbl">questões no banco</div>
+        </div>
+        <div class="login-stat-item">
+          <div class="val">12</div>
+          <div class="lbl">conceitos de Matemática</div>
+        </div>
+        <div class="login-stat-item">
+          <div class="val">DQN</div>
+          <div class="lbl">agente adaptativo</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Formulário -->
+    <div class="login-form-col">
+      <div class="login-card">
+        <div class="login-logo">
+          <div class="logo-icon">
+            <svg viewBox="0 0 100 100" fill="none">
+              <path d="M22 36 L45.5 60 Q50 66 54.5 60 L78 36" stroke="#F4F1E8" stroke-width="5.5" stroke-linecap="round"/>
+              <path d="M32 38 L47 54 Q50 58 53 54 L68 38" stroke="#F4F1E8" stroke-width="5.5" stroke-linecap="round" opacity=".8"/>
+              <path d="M42 40 L48 49 Q50 52 52 49 L58 40" stroke="#F4F1E8" stroke-width="5.5" stroke-linecap="round" opacity=".6"/>
+              <circle cx="50" cy="61" r="4.2" fill="#D49A3C"/>
+            </svg>
+          </div>
+          <div class="logo-text">
+            <div class="name">Vereda</div>
+            <div class="sub">ITS ENEM — Reforço Profundo</div>
+          </div>
+        </div>
+
+        <div class="login-heading">Entrar na plataforma</div>
+        <div class="login-sub">Use suas credenciais para acessar sua vereda personalizada.</div>
+
+        <div class="login-hint">
+          <strong>Acesso demo:</strong> usuário <strong>aluno</strong> / senha <strong>enem2024</strong>
+        </div>
+
+        <form id="form-login" onsubmit="handleLogin(event)">
+          <div class="form-field">
+            <label class="form-label" for="inp-user">Usuário</label>
+            <input class="form-input" id="inp-user" type="text" placeholder="aluno" autocomplete="username" required>
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="inp-pass">Senha</label>
+            <input class="form-input" id="inp-pass" type="password" placeholder="••••••••" autocomplete="current-password" required>
+          </div>
+          <button class="btn-primary" type="submit" id="btn-login">Entrar →</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     APP (após login)
+════════════════════════════════════════════════════════ -->
+<div id="page-app" class="hidden">
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo">
+        <svg viewBox="0 0 100 100" fill="none" width="22" height="22">
+          <path d="M20 34 L45 61 Q50 68 55 61 L80 34" stroke="#F4F1E8" stroke-width="6" stroke-linecap="round"/>
+          <path d="M31 36 L46.5 55 Q50 60 53.5 55 L69 36" stroke="#F4F1E8" stroke-width="6" stroke-linecap="round" opacity=".8"/>
+          <path d="M42 38 L48 49 Q50 53 52 49 L58 38" stroke="#F4F1E8" stroke-width="6" stroke-linecap="round" opacity=".6"/>
+          <circle cx="50" cy="63" r="4.5" fill="#D49A3C"/>
+        </svg>
+      </div>
+      <span class="topbar-title">Vereda</span>
+    </div>
+
+    <nav class="topbar-nav">
+      <button class="nav-btn active" onclick="showView('dashboard')">Painel</button>
+      <button class="nav-btn" onclick="showView('trilha')">Vereda</button>
+    </nav>
+
+    <div class="topbar-right">
+      <div class="topbar-user">
+        <div class="topbar-avatar" id="topbar-avatar">A</div>
+        <span class="topbar-name" id="topbar-name">Aluno</span>
+      </div>
+      <button class="btn-logout" onclick="handleLogout()">Sair</button>
+    </div>
+  </header>
+
+  <main class="app-body">
+
+    <!-- ── PAINEL ───────────────────────────────────────── -->
+    <div id="view-dashboard">
+      <div class="section-title">Painel de desempenho</div>
+      <div class="section-sub" id="dash-sub">Acompanhe sua evolução nos conceitos do ENEM.</div>
+
+      <!-- Cards de resumo -->
+      <div class="summary-grid">
+        <div class="summary-card highlight">
+          <div class="label">Questões respondidas</div>
+          <div class="value" id="stat-total">0</div>
+          <div class="sub">nesta sessão</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Taxa de acerto</div>
+          <div class="value" id="stat-taxa">—</div>
+          <div class="sub" id="stat-taxa-sub">aguardando dados</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Conceitos dominados</div>
+          <div class="value" id="stat-dom">0 / 12</div>
+          <div class="sub">proficiência ≥ 80%</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Recompensa total</div>
+          <div class="value" id="stat-reward">0.00</div>
+          <div class="sub">sinal do tutor DQN</div>
+        </div>
+      </div>
+
+      <!-- Gráficos principais -->
+      <div class="charts-row">
+        <div class="chart-card">
+          <div class="chart-title">Histórico de desempenho</div>
+          <div class="chart-sub">Acertos e recompensa por questão respondida</div>
+          <div class="chart-wrap" style="height:220px">
+            <canvas id="chart-historico"></canvas>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Proficiência por conceito</div>
+          <div class="chart-sub">Radar do estado atual de aprendizado</div>
+          <div class="chart-wrap" style="height:220px">
+            <canvas id="chart-radar"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Conceitos + DAG -->
+      <div class="concepts-row">
+        <div class="concept-list">
+          <div class="chart-title">Domínio por conceito</div>
+          <div id="concept-bars">
+            <div class="empty-state">
+              <div class="es-icon">📊</div>
+              <p>Carregando proficiências...</p>
+            </div>
+          </div>
+        </div>
+        <div class="dag-card">
+          <div class="chart-title">Grafo de pré-requisitos</div>
+          <div class="chart-sub">Navegação do tutor no currículo (DAG)</div>
+          <svg id="dag-svg"></svg>
+        </div>
+      </div>
+
+      <div id="empty-dash" class="empty-state">
+        <div class="es-icon">🎯</div>
+        <p>Você ainda não respondeu nenhuma questão nesta sessão.<br>Entre na Vereda para ver seus gráficos de evolução.</p>
+        <button class="btn-go-trilha" onclick="showView('trilha')">Iniciar Vereda →</button>
+      </div>
+    </div>
+
+    <!-- ── TRILHA ─────────────────────────────────────────── -->
+    <div id="view-trilha" class="hidden">
+      <div class="section-title">Vereda</div>
+      <div class="section-sub">O agente DQN escolhe a próxima questão com base no seu perfil de aprendizado.</div>
+
+      <div class="trilha-layout">
+
+        <!-- Painel da questão -->
+        <div>
+          <div class="quiz-panel" id="quiz-panel">
+            <!-- Loading state -->
+            <div id="quiz-loading" style="padding:60px;text-align:center;color:var(--c-muted)">
+              <div style="font-size:32px;margin-bottom:14px;opacity:.4">⟳</div>
+              <div style="font-size:14px">Carregando próxima questão...</div>
+            </div>
+
+            <!-- Conteúdo da questão (oculto até carregar) -->
+            <div id="quiz-content" class="hidden">
+              <div class="quiz-header">
+                <div class="quiz-concept-pill" id="quiz-concept-pill">
+                  <span class="dot"></span>
+                  <span id="quiz-concept-name">—</span>
+                </div>
+                <div class="quiz-acao-pill reforcar" id="quiz-acao-pill">
+                  ↻ Reforçar
+                </div>
+                <div class="quiz-header-right">
+                  <div class="quiz-nivel" id="quiz-nivel">Médio</div>
+                  <div class="quiz-prob" id="quiz-prob">—%</div>
+                  <div class="quiz-prob-label">prob. esperada</div>
+                </div>
+              </div>
+
+              <div class="quiz-body">
+                <div class="quiz-step-label" id="quiz-step-label">Questão 1</div>
+                <div class="quiz-enunciado" id="quiz-enunciado">—</div>
+
+                <div class="answer-section">
+                  <div class="answer-label">Escolha uma alternativa</div>
+                  <div class="alternatives-grid" id="alternatives-grid">
+                    <!-- Alternativas geradas via JS -->
+                  </div>
+                  <div id="feedback-box" class="hidden"></div>
+                  <div class="quiz-actions">
+                    <button class="btn-submit" id="btn-submit" onclick="submitAnswer()" disabled>Confirmar resposta</button>
+                    <button class="btn-next hidden" id="btn-next" onclick="nextQuestion()">Próxima questão →</button>
+                  </div>
+                </div>
+
+                <div class="quiz-progress">
+                  <div class="quiz-progress-fill" id="quiz-progress-fill" style="width:0%"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Banner de domínio (oculto) -->
+            <div id="dominio-banner" class="dominio-banner hidden" style="margin:16px">
+              <div class="db-icon">🏆</div>
+              <div class="db-text">
+                <div class="db-title">Conceito dominado!</div>
+                <div class="db-sub" id="dominio-conceito-text">Você alcançou proficiência ≥ 80% neste conceito.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sidebar -->
+        <div class="quiz-sidebar">
+
+          <!-- Mapa de conceitos -->
+          <div class="sidebar-card">
+            <div class="sc-title">Mapa de conceitos</div>
+            <div id="mini-concepts"></div>
+          </div>
+
+          <!-- Stats da sessão -->
+          <div class="sidebar-card">
+            <div class="sc-title">Sessão atual</div>
+            <div class="stat-row">
+              <span class="sr-label">Questões</span>
+              <span class="sr-val" id="side-total">0</span>
+            </div>
+            <div class="stat-row">
+              <span class="sr-label">Acertos</span>
+              <span class="sr-val" id="side-acertos">0</span>
+            </div>
+            <div class="stat-row">
+              <span class="sr-label">Taxa</span>
+              <span class="sr-val" id="side-taxa">—</span>
+            </div>
+            <div class="stat-row">
+              <span class="sr-label">Dominados</span>
+              <span class="sr-val" id="side-dom">0 / 12</span>
+            </div>
+            <div style="margin-top:12px">
+              <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+                <span style="font-size:11.5px;color:var(--c-muted)">Fadiga</span>
+                <span style="font-size:11.5px;font-weight:600;color:var(--c-subtle)" id="side-fadiga">0%</span>
+              </div>
+              <div class="fadiga-bar">
+                <div class="fadiga-fill low" id="fadiga-fill" style="width:0%"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Histórico mini -->
+          <div class="sidebar-card">
+            <div class="sc-title">Últimas respostas</div>
+            <div id="mini-historico">
+              <div style="font-size:12px;color:var(--c-subtle);text-align:center;padding:12px 0">Sem histórico ainda.</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   ESTADO DA APLICAÇÃO
+═══════════════════════════════════════════════════════════════ */
+const API = 'http://localhost:8000';
+
+let state = {
+  token:       null,
+  nome:        null,
+  estudanteId: null,
+  currentView: 'dashboard',
+  // Questão atual
+  questaoAtual: null,
+  letraSelecionada: null,      // alternativa objetiva selecionada
+  // Charts
+  chartHistorico: null,
+  chartRadar:     null,
+  // Dados de desempenho
+  desempenho: null,
+  conceitos:  null,
+  // Sessão in-memory
+  passos: 0,
+  acertos: 0,
+  fadiga: 0,
+  dominados: 0,
+  totalConceitos: 12,
+  historico: [],
+};
+
+/* ── Utilitários ─────────────────────────────────────────────── */
+function apiHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${state.token}`,
+  };
+}
+
+async function apiFetch(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: { ...apiHeaders(), ...(opts.headers || {}) },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Erro ${res.status}`);
+  }
+  return res.json();
+}
+
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'show' + (type ? ' ' + type : '');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.className = ''; }, 3200);
+}
+
+function setView(id) {
+  ['dashboard', 'trilha'].forEach(v => {
+    document.getElementById(`view-${v}`).classList.toggle('hidden', v !== id);
+  });
+  document.querySelectorAll('.nav-btn').forEach((btn, i) => {
+    btn.classList.toggle('active', ['dashboard','trilha'][i] === id);
+  });
+  state.currentView = id;
+}
+
+function showView(view) {
+  setView(view);
+  if (view === 'dashboard') {
+    loadDesempenho();
+  } else if (view === 'trilha') {
+    if (!state.questaoAtual) loadNextQuestion();
+    renderMiniConcepts();
+    renderMiniHistorico();
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   LOGIN / LOGOUT
+═══════════════════════════════════════════════════════════════ */
+async function handleLogin(e) {
+  e.preventDefault();
+  const btn = document.getElementById('btn-login');
+  const username = document.getElementById('inp-user').value.trim();
+  const password = document.getElementById('inp-pass').value;
+
+  btn.disabled = true;
+  btn.textContent = 'Entrando…';
+
+  try {
+    const data = await apiFetch('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    state.token       = data.token;
+    state.nome        = data.nome;
+    state.estudanteId = data.estudante_id;
+
+    // Atualiza topbar
+    document.getElementById('topbar-name').textContent = data.nome.split(' ')[0];
+    document.getElementById('topbar-avatar').textContent = data.nome.charAt(0).toUpperCase();
+
+    // Troca de tela
+    document.getElementById('page-login').classList.add('hidden');
+    document.getElementById('page-app').classList.remove('hidden');
+
+    showToast(data.mensagem, 'ok');
+    setView('dashboard');
+    loadDesempenho();
+
+  } catch (err) {
+    showToast(err.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Entrar →';
+  }
+}
+
+async function handleLogout() {
+  try { await apiFetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
+  state.token = null;
+  state.questaoAtual = null;
+  state.historico = [];
+  state.passos = state.acertos = 0;
+
+  document.getElementById('page-app').classList.add('hidden');
+  document.getElementById('page-login').classList.remove('hidden');
+  document.getElementById('inp-pass').value = '';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TRILHA — QUESTÃO
+═══════════════════════════════════════════════════════════════ */
+async function loadNextQuestion() {
+  showQuizLoading(true);
+  hideFeedback();
+  state.letraSelecionada = null;
+  document.getElementById('dominio-banner').classList.add('hidden');
+
+  try {
+    const q = await apiFetch('/api/questao/proxima');
+    state.questaoAtual = q;
+    renderQuestion(q);
+    renderMiniConcepts();
+  } catch (err) {
+    showToast('Erro ao carregar questão: ' + err.message, 'err');
+  } finally {
+    showQuizLoading(false);
+  }
+}
+
+function renderQuestion(q) {
+  // Conceito pill
+  document.getElementById('quiz-concept-name').textContent = q.conceito_display;
+
+  // Ação DQN pill
+  const pill = document.getElementById('quiz-acao-pill');
+  const acaoMap = {
+    'Avançar':  { cls: 'avancar',  label: '↑ Avançar' },
+    'Reforçar': { cls: 'reforcar', label: '↻ Reforçar' },
+    'Remediar': { cls: 'remediar', label: '↓ Remediar' },
+  };
+  const { cls, label } = acaoMap[q.acao_rl] || { cls: 'reforcar', label: q.acao_rl };
+  pill.className = `quiz-acao-pill ${cls}`;
+  pill.textContent = label;
+
+  // Nível e prob
+  document.getElementById('quiz-nivel').textContent = q.nivel;
+  document.getElementById('quiz-prob').textContent = Math.round(q.prob_esperada * 100) + '%';
+
+  // Enunciado
+  document.getElementById('quiz-step-label').textContent = `Questão ${(q.passos || 0) + 1}`;
+  document.getElementById('quiz-enunciado').textContent = q.enunciado;
+
+  // Alternativas A/B/C/D
+  renderAlternatives(q.alternativas || []);
+
+  // Progresso dominados
+  updateProgress(q.dominados, q.total_conceitos);
+
+  // UI state
+  document.getElementById('btn-submit').classList.remove('hidden');
+  document.getElementById('btn-submit').disabled = true; // habilitado ao selecionar alt.
+  document.getElementById('btn-next').classList.add('hidden');
+  document.getElementById('quiz-content').classList.remove('hidden');
+}
+
+function renderAlternatives(alternativas) {
+  const grid = document.getElementById('alternatives-grid');
+  grid.innerHTML = alternativas.map((alt, i) => {
+    const letra = alt.charAt(0); // "A", "B", "C", "D"
+    const texto = alt.slice(3);  // remove "A) "
+    return `
+      <button class="alt-btn" data-letra="${letra}" onclick="selectAlternative(this)" id="alt-${letra}">
+        <span class="alt-letter">${letra}</span>
+        <span class="alt-text">${texto}</span>
+      </button>
+    `;
+  }).join('');
+  state.letraSelecionada = null;
+}
+
+function selectAlternative(btn) {
+  // Só permite seleção se não respondido ainda
+  if (btn.disabled) return;
+  // Remove seleção anterior
+  document.querySelectorAll('.alt-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  state.letraSelecionada = btn.dataset.letra;
+  document.getElementById('btn-submit').disabled = false;
+}
+
+function showQuizLoading(show) {
+  document.getElementById('quiz-loading').classList.toggle('hidden', !show);
+  document.getElementById('quiz-content').classList.toggle('hidden', show);
+}
+
+async function submitAnswer() {
+  if (!state.letraSelecionada) { showToast('Selecione uma alternativa antes de confirmar.', ''); return; }
+  if (!state.questaoAtual) return;
+
+  const btn = document.getElementById('btn-submit');
+  btn.disabled = true;
+  btn.textContent = 'Verificando…';
+
+  try {
+    const result = await apiFetch('/api/questao/responder', {
+      method: 'POST',
+      body: JSON.stringify({
+        questao_id: state.questaoAtual.questao_id,
+        resposta: state.letraSelecionada,
+      }),
+    });
+
+    // Destaca alternativas corretas / erradas
+    highlightAlternatives(state.letraSelecionada, result.gabarito);
+
+    showFeedback(result);
+    updateSidebar(result);
+
+    // Atualiza histórico local
+    state.historico.unshift({
+      conceito: state.questaoAtual.conceito_display,
+      acertou: result.correto,
+      proficiencia: result.nova_proficiencia,
+      acao: state.questaoAtual.acao_rl,
+    });
+    state.passos = result.passos;
+    state.fadiga = result.fadiga;
+    state.dominados = result.dominados;
+    if (state.historico.length > 20) state.historico.pop();
+
+    renderMiniHistorico();
+
+    // Banner de domínio
+    if (result.correto && result.nova_proficiencia >= 0.80) {
+      const banner = document.getElementById('dominio-banner');
+      document.getElementById('dominio-conceito-text').textContent =
+        `Você dominou "${result.conceito_display}" com ${Math.round(result.nova_proficiencia * 100)}% de proficiência!`;
+      banner.classList.remove('hidden');
+    }
+
+    if (result.episodio_completo) {
+      setTimeout(() => showToast('🎉 Parabéns! Você atingiu nível avançado em 70% do currículo!', 'ok'), 500);
+    }
+
+    btn.classList.add('hidden');
+    document.getElementById('btn-next').classList.remove('hidden');
+
+  } catch (err) {
+    showToast('Erro: ' + err.message, 'err');
+    btn.disabled = false;
+    btn.textContent = 'Confirmar resposta';
+  }
+}
+
+function highlightAlternatives(letraSelecionada, gabarito) {
+  document.querySelectorAll('.alt-btn').forEach(btn => {
+    btn.disabled = true;
+    const letra = btn.dataset.letra;
+    if (letra === gabarito) {
+      btn.classList.remove('selected', 'dimmed');
+      btn.classList.add('correct');
+    } else if (letra === letraSelecionada) {
+      btn.classList.remove('selected');
+      btn.classList.add('wrong');
+    } else {
+      btn.classList.remove('selected');
+      btn.classList.add('dimmed');
+    }
+  });
+}
+
+function nextQuestion() {
+  loadNextQuestion();
+}
+
+function showFeedback(result) {
+  const box = document.getElementById('feedback-box');
+  const icon  = result.correto ? '✓' : '✗';
+  const cls   = result.correto ? 'correct' : 'wrong';
+  const title = result.correto ? 'Resposta correta!' : `Resposta incorreta — gabarito: ${result.gabarito}`;
+  const recompensaTxt = result.recompensa >= 0
+    ? `+${result.recompensa.toFixed(3)}`
+    : result.recompensa.toFixed(3);
+  const profTxt = `${Math.round(result.nova_proficiencia * 100)}%`;
+
+  box.innerHTML = `
+    <div class="feedback-icon">${icon}</div>
+    <div class="feedback-txt">
+      <strong>${title}</strong>
+      Proficiência em <em>${result.conceito_display}</em>: <strong>${profTxt}</strong>
+      · Recompensa DQN: <strong>${recompensaTxt}</strong><br>
+      <span style="opacity:.8">${result.mensagem}</span>
+    </div>
+  `;
+  box.className = `feedback-box ${cls}`;
+  box.classList.remove('hidden');
+}
+
+function hideFeedback() {
+  document.getElementById('feedback-box').classList.add('hidden');
+}
+
+function updateProgress(dominados, total) {
+  const pct = total > 0 ? Math.round(dominados / total * 100) : 0;
+  document.getElementById('quiz-progress-fill').style.width = pct + '%';
+}
+
+function updateSidebar(result) {
+  const totalLocal = state.passos + 1;
+  const acertosLocal = (state.historico.filter(h => h.acertou).length + (result.correto ? 1 : 0));
+  const taxa = totalLocal > 0 ? Math.round(acertosLocal / totalLocal * 100) : 0;
+
+  document.getElementById('side-total').textContent   = result.passos;
+  document.getElementById('side-acertos').textContent = state.historico.filter(h => h.acertou).length + (result.correto ? 1 : 0);
+  document.getElementById('side-taxa').textContent    = taxa + '%';
+  document.getElementById('side-dom').textContent     = `${result.dominados} / ${state.totalConceitos}`;
+
+  const fadigaPct = Math.round(result.fadiga * 100);
+  document.getElementById('side-fadiga').textContent = fadigaPct + '%';
+  const fill = document.getElementById('fadiga-fill');
+  fill.style.width = fadigaPct + '%';
+  fill.className = 'fadiga-fill ' + (fadigaPct < 40 ? 'low' : '');
+}
+
+function renderMiniConcepts() {
+  const container = document.getElementById('mini-concepts');
+  if (!state.conceitos) {
+    apiFetch('/api/conceitos')
+      .then(data => {
+        state.conceitos = data;
+        _renderMiniConceptsData(container);
+      })
+      .catch(() => {});
+    return;
+  }
+  _renderMiniConceptsData(container);
+}
+
+function _renderMiniConceptsData(container) {
+  const atualId = state.questaoAtual?.conceito_id;
+  container.innerHTML = state.conceitos.map(c => `
+    <div class="mini-concept ${c.id === atualId ? 'active' : ''}">
+      <div class="mc-dot"></div>
+      <div class="mc-name" title="${c.nome_display}">${c.nome_display}</div>
+      <div class="mc-pct">${Math.round(c.proficiencia * 100)}%</div>
+    </div>
+  `).join('');
+}
+
+function renderMiniHistorico() {
+  const container = document.getElementById('mini-historico');
+  if (state.historico.length === 0) {
+    container.innerHTML = '<div style="font-size:12px;color:var(--c-subtle);text-align:center;padding:12px 0">Sem histórico ainda.</div>';
+    return;
+  }
+  container.innerHTML = state.historico.slice(0, 8).map(h => `
+    <div class="hist-item">
+      <div class="hist-dot ${h.acertou ? 'ok' : 'err'}"></div>
+      <div class="hist-text" title="${h.conceito}">${h.conceito}</div>
+      <div class="hist-pct">${Math.round(h.proficiencia * 100)}%</div>
+    </div>
+  `).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DASHBOARD
+═══════════════════════════════════════════════════════════════ */
+async function loadDesempenho() {
+  try {
+    const [desemp, conceitos] = await Promise.all([
+      apiFetch('/api/desempenho'),
+      apiFetch('/api/conceitos'),
+    ]);
+    state.desempenho = desemp;
+    state.conceitos  = conceitos;
+
+    renderSummaryCards(desemp);
+    renderConceptBars(conceitos);
+    renderChartHistorico(desemp);
+    renderChartRadar(conceitos);
+    renderDAG(conceitos);
+
+    // Ocultar empty state se tem dados
+    document.getElementById('empty-dash').classList.toggle('hidden', desemp.total_questoes > 0);
+    document.getElementById('dash-sub').textContent =
+      desemp.total_questoes > 0
+        ? `${desemp.total_questoes} questão(ões) respondida(s) · sessão atual`
+        : 'Acompanhe sua evolução nos conceitos do ENEM — entre na Vereda para começar.';
+
+  } catch (err) {
+    console.warn('Erro ao carregar desempenho:', err);
+  }
+}
+
+function renderSummaryCards(d) {
+  document.getElementById('stat-total').textContent  = d.total_questoes;
+  document.getElementById('stat-taxa').textContent   = d.total_questoes > 0 ? Math.round(d.taxa_acerto * 100) + '%' : '—';
+  document.getElementById('stat-taxa-sub').textContent = d.total_questoes > 0
+    ? `${d.total_acertos} de ${d.total_questoes} corretas`
+    : 'aguardando dados';
+  document.getElementById('stat-dom').textContent    = `${d.dominados} / ${d.total_conceitos}`;
+  document.getElementById('stat-reward').textContent = d.recompensa_total.toFixed(2);
+}
+
+function renderConceptBars(conceitos) {
+  const container = document.getElementById('concept-bars');
+  if (!conceitos.length) return;
+  container.innerHTML = conceitos.map(c => {
+    const pct = Math.round(c.proficiencia * 100);
+    const dom = c.dominado;
+    return `
+      <div class="concept-item">
+        <div class="ci-name" title="${c.nome_display}">${c.nome_display}</div>
+        <div class="ci-bar-wrap">
+          <div class="ci-bar-fill ${dom ? 'dominated' : ''}" style="width:${pct}%"></div>
+        </div>
+        <div class="ci-pct">${pct}%</div>
+        <div class="ci-badge ${dom ? 'dom' : 'ndom'}">${dom ? '✓' : '·'}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderChartHistorico(d) {
+  const canvas = document.getElementById('chart-historico');
+  const ctx = canvas.getContext('2d');
+
+  if (state.chartHistorico) {
+    state.chartHistorico.destroy();
+    state.chartHistorico = null;
+  }
+
+  if (d.total_questoes === 0) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.font = '13px IBM Plex Sans';
+    ctx.fillStyle = '#9aa0a7';
+    ctx.textAlign = 'center';
+    ctx.fillText('Nenhum dado ainda — inicie a trilha', canvas.width / 2, canvas.height / 2);
+    return;
+  }
+
+  const labels = d.historico.map((_, i) => `Q${i + 1}`);
+  const acertosCumul = [];
+  let acc = 0;
+  d.acertos_por_passo.forEach(a => { acc += a; acertosCumul.push(acc); });
+
+  state.chartHistorico = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Acerto',
+          data: d.acertos_por_passo,
+          backgroundColor: d.acertos_por_passo.map(a => a ? 'rgba(47,143,107,.75)' : 'rgba(192,57,43,.55)'),
+          borderRadius: 4,
+          yAxisID: 'y',
+        },
+        {
+          type: 'line',
+          label: 'Recompensa acum.',
+          data: d.recompensa_por_passo.reduce((acc, v, i) => { acc.push((acc[i-1] || 0) + v); return acc; }, []),
+          borderColor: '#1f5e47',
+          borderWidth: 2,
+          pointRadius: 3,
+          pointBackgroundColor: '#1f5e47',
+          fill: false,
+          tension: 0.35,
+          yAxisID: 'y2',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: true, labels: { boxWidth: 12, font: { size: 11 } } } },
+      scales: {
+        y:  { type: 'linear', position: 'left',  min: 0, max: 1, ticks: { stepSize: 1 }, grid: { color: '#eee' } },
+        y2: { type: 'linear', position: 'right', grid: { drawOnChartArea: false }, ticks: { font: { size: 10 } } },
+        x:  { ticks: { font: { size: 10 } }, grid: { display: false } },
+      },
+    },
+  });
+}
+
+function renderChartRadar(conceitos) {
+  const canvas = document.getElementById('chart-radar');
+  const ctx = canvas.getContext('2d');
+
+  if (state.chartRadar) {
+    state.chartRadar.destroy();
+    state.chartRadar = null;
+  }
+
+  // Usa apenas parte dos conceitos para não poluir o radar
+  const labels = conceitos.map(c => c.nome_display.replace(' e ', '/').replace('Medidas de ', '').replace('Fórmulas de ', ''));
+  const valores = conceitos.map(c => Math.round(c.proficiencia * 100));
+
+  state.chartRadar = new Chart(ctx, {
+    type: 'radar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Proficiência (%)',
+        data: valores,
+        backgroundColor: 'rgba(47,143,107,.18)',
+        borderColor: '#2f8f6b',
+        borderWidth: 2,
+        pointBackgroundColor: '#1f5e47',
+        pointRadius: 3,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        r: {
+          min: 0,
+          max: 100,
+          ticks: { stepSize: 25, font: { size: 9 }, backdropColor: 'transparent' },
+          pointLabels: { font: { size: 9.5 }, color: '#5c6168' },
+          grid: { color: '#e8edf2' },
+          angleLines: { color: '#e8edf2' },
+        },
+      },
+    },
+  });
+}
+
+/* ─── DAG SVG ───────────────────────────────────────────────── */
+function renderDAG(conceitos) {
+  const svg = document.getElementById('dag-svg');
+  const W = svg.clientWidth || 480;
+  const H = 280;
+
+  // Calcula profundidade
+  const profMap = {};
+  const preReqMap = {};
+  conceitos.forEach(c => {
+    preReqMap[c.id] = c.pre_requisitos;
+  });
+
+  function depth(id, memo = {}) {
+    if (id in memo) return memo[id];
+    const pres = preReqMap[id] || [];
+    memo[id] = pres.length === 0 ? 0 : 1 + Math.max(...pres.map(p => depth(p, memo)));
+    return memo[id];
+  }
+  conceitos.forEach(c => { profMap[c.id] = depth(c.id); });
+  const maxDepth = Math.max(...Object.values(profMap));
+
+  // Agrupa por nível
+  const levels = {};
+  conceitos.forEach(c => {
+    const lv = profMap[c.id];
+    if (!levels[lv]) levels[lv] = [];
+    levels[lv].push(c);
+  });
+
+  const nLevels = maxDepth + 1;
+  const padding = { top: 20, bottom: 20, left: 16, right: 16 };
+  const nodeH = 28;
+  const levelH = (H - padding.top - padding.bottom) / Math.max(nLevels - 1, 1);
+
+  // Posições dos nós
+  const pos = {};
+  Object.entries(levels).forEach(([lv, nodes]) => {
+    const y = padding.top + parseInt(lv) * levelH;
+    const xStep = (W - padding.left - padding.right) / (nodes.length + 1);
+    nodes.forEach((c, i) => {
+      pos[c.id] = { x: padding.left + xStep * (i + 1), y };
+    });
+  });
+
+  // Constrói SVG
+  let svgContent = `<defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c7ccd3"/>
+    </marker>
+  </defs>`;
+
+  // Arestas
+  conceitos.forEach(c => {
+    (c.dependentes || []).forEach(depId => {
+      const from = pos[c.id];
+      const to   = pos[depId];
+      if (from && to) {
+        svgContent += `<line x1="${from.x}" y1="${from.y + nodeH/2}" x2="${to.x}" y2="${to.y - nodeH/2}"
+          stroke="#dde2e9" stroke-width="1.5" marker-end="url(#arrow)"/>`;
+      }
+    });
+  });
+
+  // Nós
+  const nodeW = 110;
+  conceitos.forEach(c => {
+    const { x, y } = pos[c.id];
+    const dominated = c.dominado;
+    const active    = c.id === state.questaoAtual?.conceito_id;
+    const fill      = active ? '#1f5e47' : dominated ? '#e8f5ef' : '#f7f8fa';
+    const stroke    = active ? '#1f5e47' : dominated ? '#2f8f6b' : '#dde2e9';
+    const textColor = active ? '#fff' : '#1a1714';
+    const pct       = Math.round(c.proficiencia * 100);
+
+    const displayName = c.nome_display.length > 14
+      ? c.nome_display.split(' ').slice(0, 2).join(' ')
+      : c.nome_display;
+
+    svgContent += `
+      <g class="dag-node" title="${c.nome_display}">
+        <rect x="${x - nodeW/2}" y="${y - nodeH/2}" width="${nodeW}" height="${nodeH}"
+          rx="7" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>
+        <text x="${x}" y="${y - 2}" text-anchor="middle"
+          fill="${textColor}" class="dag-label" font-weight="${active ? '700' : '500'}">${displayName}</text>
+        <text x="${x}" y="${y + 11}" text-anchor="middle"
+          fill="${active ? 'rgba(255,255,255,.7)' : '#9aa0a7'}" class="dag-label" font-size="9">${pct}%</text>
+      </g>`;
+  });
+
+  svg.innerHTML = svgContent;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   INICIALIZAÇÃO
+═══════════════════════════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', () => {
+  // Tenta restaurar sessão (sem token persistido, apenas mantém durante a tab)
+  if (state.token) {
+    document.getElementById('page-login').classList.add('hidden');
+    document.getElementById('page-app').classList.remove('hidden');
+    loadDesempenho();
+  }
+
+  // Teclas de atalho: A/B/C/D para selecionar alternativa, Enter para avançar
+  document.addEventListener('keydown', e => {
+    const key = e.key.toUpperCase();
+    const btnNext = document.getElementById('btn-next');
+    if (['A','B','C','D'].includes(key) && btnNext.classList.contains('hidden')) {
+      const btn = document.getElementById(`alt-${key}`);
+      if (btn && !btn.disabled) selectAlternative(btn);
+    }
+    if (e.key === 'Enter') {
+      if (!btnNext.classList.contains('hidden')) {
+        nextQuestion();
+      } else if (!document.getElementById('btn-submit').disabled) {
+        submitAnswer();
+      }
+    }
+  });
+});
+</script>
+</body>
+</html>

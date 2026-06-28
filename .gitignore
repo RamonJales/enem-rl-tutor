@@ -151,11 +151,16 @@ activemq-data/
 .env
 .envrc
 .venv
-env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Exceção: 'env/' acima ignora virtualenvs, mas este projeto tem um PACOTE-FONTE
+# chamado env/ (o Ambiente Simulador do aluno). Versionamos só os fontes .py
+# (sem reincluir __pycache__ e afins).
+!env/
+!env/*.py
 
 # Spyder project settings
 .spyderproject
