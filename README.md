@@ -1,135 +1,167 @@
 # enem-rl-tutor
 
-The project abstracts learning into a dynamic process based on the student's interaction with mathematical concepts. Theoretical inspirations include the Zone of Proximal Development (Vygotsky), Item Response Theory (IRT), and the principles of Metacognition (Open Learner Models).
+Sistema Tutor Inteligente (ITS) com Aprendizado por Reforço Profundo (DQN) para trilha adaptativa de Matemática do ENEM. Inspirações teóricas: Zona de Desenvolvimento Proximal (Vygotsky), Teoria de Resposta ao Item (TRI) e Metacognição (Modelo Aberto do Aluno).
 
 ## Visão geral
 
-Sistema Tutor Inteligente (ITS) que usa Aprendizado por Reforço Profundo (DQN) para
-escolher a melhor Ação Pedagógica para um aluno a cada passo:
+O agente DQN escolhe a melhor **Ação Pedagógica** a cada passo:
 
 - `Avançar` — apresenta um conceito sucessor no grafo de pré-requisitos (DAG).
 - `Reforçar` — mantém o aluno no mesmo conceito (mais prática).
 - `Remediar` — retrocede para um pré-requisito do conceito atual.
 
-A recompensa é dinâmica: `R_t = y - ŷ` (acerto observado menos acerto esperado),
-incentivando o tutor a manter o aluno na Zona de Desenvolvimento Proximal.
+A recompensa é orientada à meta: premia ganho de proficiência, domínio de novos conceitos e sondagem eficiente (redução do erro de crença Bayesiana).
 
 ## Requisitos
 
-- Python 3.10+ (usa sintaxe de tipos como `float | None`).
-- Dependências em [requirements.txt](requirements.txt): `torch`, `numpy`, `sqlalchemy`, `fastapi`, `uvicorn`, `pydantic`.
+- Python 3.10+
+- Dependências listadas em [requirements.txt](requirements.txt): `torch`, `numpy`, `matplotlib`, `sqlalchemy`, `fastapi`, `uvicorn`, `pydantic`
 
 ## Instalação
 
 ```bash
 # (opcional) crie e ative um ambiente virtual
 python -m venv .venv
+
 # Windows (PowerShell):
 .venv\Scripts\Activate.ps1
 # Linux/macOS:
-# source .venv/bin/activate
+source .venv/bin/activate
 
 # instale as dependências
 pip install -r requirements.txt
+
+# instale o servidor ASGI com suporte a recarga automática
+pip install "uvicorn[standard]"
 ```
 
 ## Como rodar
 
-Sempre execute a partir da raiz do projeto (`enem_rl_tutor/`) usando a flag `-m`,
-para que os imports de pacote (`agent`, `env`, `data`) funcionem corretamente.
+Execute sempre a partir da raiz do projeto (`enem_rl_tutor/`) usando a flag `-m`.
+
+---
 
 ### 1. Criar e popular o banco de dados
 
-Gera o SQLite `data/enem_tutor.db` com o grafo de conceitos, questões e o estado
-inicial do aluno de teste:
+Gera `data/enem_tutor.db` com o grafo de 12 conceitos, **180 questões objetivas** (A/B/C/D) e o estado inicial de proficiência do aluno:
 
 ```bash
 python -m data.database_setup
 ```
 
-### 2. Treinar o agente DQN
+> ⚠️ Se o banco já existir, ele é **recriado do zero** (seed fixo — reprodutível).
 
-Roda o loop de episódios (o ambiente conecta ao banco; se ele não existir, é
-criado automaticamente). Os pesos treinados são salvos em `data/weights/dqn_policy.pt`:
+---
+
+### 2. Treinar o agente DQN
 
 ```bash
 python -m agent.train
 ```
 
-Hiperparâmetros (número de episódios, `epsilon`, `batch_size`, etc.) ficam no topo
-de [agent/train.py](agent/train.py) e podem ser ajustados conforme necessário.
+Roda 500 episódios com o `StudentEnvironment`. Salva em `data/weights/`:
+- `dqn_policy.pt` — pesos da política treinada
+- `recompensa_vs_episodios.png` — curva de aprendizado
 
-Ao final do treino, além dos pesos, é gerado automaticamente o gráfico da curva de
-aprendizado em `data/weights/recompensa_vs_episodios.png` (Recompensa vs. Episódios,
-com média móvel e o melhor desempenho destacado) para análise posterior.
+> Os hiperparâmetros (episódios, `epsilon`, `batch_size`, etc.) ficam no topo de [`agent/train.py`](agent/train.py).
 
-### 3. Avaliar a robustez da política (após o treino)
+---
 
-Com os pesos já treinados em `data/weights/dqn_policy.pt`, esta etapa roda a
-política **gulosa** (sem explorar e sem treinar) contra diferentes **perfis de
-aluno** para medir a generalização *out-of-distribution* (o agente nunca viu
-esses perfis no treino):
+### 3. Rodar a plataforma web (frontend)
 
-A habilidade-base do aluno (com aprendizado e pré-requisitos) é sempre a do
-simulador; cada bot aplica apenas sua **distorção de comportamento** por cima:
+A plataforma é uma SPA (Single-Page Application) servida pela própria API FastAPI.
+O agente DQN carregado recomenda questões em tempo real para o aluno real.
 
-- **Modelo interno (treino)** — o próprio `StudentEnvironment` (baseline).
-- **Aluno consistente** — `ConsistentStudentBot` (sem distorção; serve de
-  verificação de sanidade, deve acompanhar o baseline).
-- **Aluno chutador** — `GuessingStudentBot` (chuta nas questões difíceis e tem
-  desatenção nas demais — alta variância).
+#### Iniciar o servidor
+
+```bash
+python -m uvicorn api.main:app --reload --port 8000
+```
+
+#### Acessar no navegador
+
+```
+http://localhost:8000
+```
+
+#### Credenciais de acesso (demo)
+
+| Usuário | Senha     |
+|---------|-----------|
+| `aluno` | `enem2024`|
+| `demo`  | `demo`    |
+| `admin` | `admin`   |
+
+#### Rotas da API (OpenAPI disponível em `/docs`)
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/api/auth/login` | Autenticação |
+| `POST` | `/api/auth/logout` | Encerrar sessão |
+| `GET`  | `/api/questao/proxima` | DQN seleciona próxima questão (A/B/C/D) |
+| `POST` | `/api/questao/responder` | Registra resposta e atualiza crença Bayesiana |
+| `GET`  | `/api/desempenho` | Dados de desempenho para os gráficos |
+| `GET`  | `/api/conceitos` | Proficiências por conceito |
+| `GET`  | `/api/health` | Status do servidor |
+
+> O modelo DQN (`data/weights/dqn_policy.pt`) é carregado automaticamente. Se não existir, o servidor opera com uma heurística de fallback (sem necessidade de treino prévio).
+
+---
+
+### 4. Avaliar a robustez da política
 
 ```bash
 python -m agent.avaliar_robustez
 ```
 
-É um passo de **inferência puro**: não altera `student_env.py`, não otimiza a
-rede e não sobrescreve os pesos — apenas LÊ o `.pt` treinado. Ao final, imprime
-um resumo no console e salva o painel comparativo (recompensa, taxa de nível
-avançado e conceitos dominados por perfil) em
-`docs/figuras/avaliacao_robustez.png` para a documentação.
+Avalia a política gulosa contra três perfis de aluno (50 episódios cada). Gera `docs/figuras/avaliacao_robustez.png`.
 
-### 4. Rodar os testes
+---
 
-A suíte cobre o Modelo de Domínio (`env/knowledge_graph.py`), os perfis de aluno
-(`env/bots.py`) e um teste de integração do fluxo real (`StudentEnvironment` +
-`DQNAgent`) executado contra um banco SQLite temporário — sem tocar no banco de
-produção nem na dinâmica de treino:
+### 5. Rodar os testes
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-## Project structure
+---
+
+## Estrutura do projeto
 
 ```
 enem_rl_tutor/
-├── agent/                       # Domínio de Reinforcement Learning (RL)
-│   ├── __init__.py
-│   ├── model.py                 # Classe da Rede Neural em PyTorch (nn.Module)
-│   ├── replay_buffer.py         # Lógica de armazenamento de memória (Experience Replay)
-│   ├── dqn_agent.py             # Política do Agente (escolha da ação, cálculo de perda)
-│   ├── train.py                 # Loop principal dos episódios de treinamento
-│   └── avaliar_robustez.py      # Avaliação da política treinada contra perfis de aluno (bots)
-├── env/                         # Domínio do Ambiente Simulador
-│   ├── __init__.py              # Expõe StudentEnvironment, KnowledgeGraph e os bots
-│   ├── student_env.py           # Simulador: recebe ação, atualiza proficiência, devolve recompensa (caminho do DQN)
-│   ├── knowledge_graph.py       # Regras do DAG de Matemática (propagação de pré-requisitos)
-│   └── bots.py                  # Perfis simulados de alunos (ex: chutador, consistente)
-├── api/                         # Domínio do Backend
-│   ├── __init__.py
-│   ├── main.py                  # Rotas FastAPI (receber estado e retornar recomendação)
-│   └── schemas.py               # Modelos de validação de dados (Pydantic)
-├── data/                        # Persistência
-│   ├── raw/                     # Banco de dados de questões e desempenho
-│   └── weights/                 # Pesos salvos do modelo PyTorch (.pt)
-├── notebooks/                   # Experimentação e Análise
-│   └── avaliacao_agente.ipynb   # Geração de gráficos de curva de aprendizado
-├── tests/                       # Testes (unittest)
-│   ├── __init__.py
-│   └── test_env.py              # Domínio (KnowledgeGraph/bots) + integração do fluxo real
-├── Dockerfile                   # Receita de containerização da aplicação
-├── docker-compose.yml           # Orquestração para deploy da API e dependências
-├── .gitignore                   # Exclusão de arquivos sensíveis e pesados
-└── requirements.txt             # Dependências Python (torch, numpy, fastapi, etc.)
+├── agent/
+│   ├── model.py                 # Rede neural DQN (PyTorch)
+│   ├── replay_buffer.py         # Experience Replay
+│   ├── dqn_agent.py             # Política do agente (select_action, optimize)
+│   ├── train.py                 # Loop de treinamento (500 episódios)
+│   └── avaliar_robustez.py      # Avaliação out-of-distribution
+├── env/
+│   ├── student_env.py           # Simulador do aluno (estilo Gym)
+│   ├── knowledge_graph.py       # Grafo DAG de pré-requisitos
+│   └── bots.py                  # Perfis de aluno (consistente, chutador)
+├── api/
+│   ├── main.py                  # Backend FastAPI (serve frontend + API REST)
+│   └── schemas.py               # Schemas Pydantic
+├── frontend/
+│   └── index.html               # SPA (login · dashboard · trilha adaptativa)
+├── data/
+│   ├── database_setup.py        # Schema SQLAlchemy + seed (180 questões objetivas)
+│   ├── enem_tutor.db            # SQLite (gerado pelo passo 1)
+│   └── weights/
+│       └── dqn_policy.pt        # Pesos treinados (gerado pelo passo 2)
+├── docs/
+│   ├── RELATORIO_TECNICO.md
+│   └── figuras/
+├── tests/
+│   └── test_env.py
+└── requirements.txt
+```
+
+## Fluxo resumido
+
+```
+[1] database_setup  →  enem_tutor.db  (grafo + 180 questões A/B/C/D)
+[2] agent.train     →  dqn_policy.pt  (política treinada)
+[3] uvicorn         →  localhost:8000 (plataforma web + API)
 ```

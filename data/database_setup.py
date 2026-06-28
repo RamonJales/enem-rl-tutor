@@ -30,6 +30,8 @@ from __future__ import annotations
 import os
 import random
 
+import json
+
 from sqlalchemy import (
     Float,
     ForeignKey,
@@ -129,7 +131,9 @@ class Questao(Base):
     )
     dificuldade: Mapped[float] = mapped_column(Float, nullable=False)
     enunciado: Mapped[str] = mapped_column(Text, nullable=False)
-    gabarito: Mapped[str] = mapped_column(String(10), nullable=False)
+    gabarito: Mapped[str] = mapped_column(String(4), nullable=False)   # "A" | "B" | "C" | "D"
+    # JSON list: ["A) texto", "B) texto", "C) texto", "D) texto"]
+    alternativas: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
 
     conceito: Mapped["Conceito"] = relationship("Conceito")
 
@@ -256,95 +260,186 @@ NIVEIS: dict[str, tuple[float, int]] = {
 QUESTOES_POR_CELULA = 5
 
 
-def _g_matematica_basica(m: int) -> tuple[str, str]:
+# ---------------------------------------------------------------------------- #
+# Helpers para geração de alternativas objetivas
+# ---------------------------------------------------------------------------- #
+
+def _montar_alternativas(gabarito_val: str, erradas: list[str]) -> tuple[list[str], str]:
+    """
+    Embaralha gabarito + 3 alternativas erradas e devolve
+    (lista "A) ...", "B) ...", ..., letra_gabarito).
+    """
+    pool = list(dict.fromkeys([gabarito_val] + erradas))  # sem duplicatas
+    while len(pool) < 4:
+        # Adiciona variação numérica simples se faltar
+        try:
+            v = int(pool[0].replace("R$ ", "").replace("°", "").replace(",", ".").split()[0])
+            pool.append(str(v + len(pool) * 3))
+        except Exception:
+            pool.append(pool[0] + "?")
+    pool = pool[:4]
+    random.shuffle(pool)
+    letras = ["A", "B", "C", "D"]
+    alternativas = [f"{letras[i]}) {pool[i]}" for i in range(4)]
+    gabarito_letra = letras[pool.index(gabarito_val)]
+    return alternativas, gabarito_letra
+
+
+def _erros_num(val: int | float, n: int = 3) -> list[str]:
+    """Gera n valores numéricos errados plausíveis a partir do valor correto."""
+    fatores = [0.5, 0.75, 1.5, 2.0, 0.8, 1.25, 3.0]
+    random.shuffle(fatores)
+    erros: list[str] = []
+    seen = {val}
+    for f in fatores:
+        v = round(val * f)
+        if v not in seen and v > 0:
+            seen.add(v)
+            erros.append(str(v))
+        if len(erros) >= n:
+            break
+    # fallback com offsets
+    offset = 1
+    while len(erros) < n:
+        v = int(val) + offset * (1 if offset % 2 == 0 else -1)
+        if v not in seen and v > 0:
+            seen.add(v)
+            erros.append(str(v))
+        offset += 1
+    return erros[:n]
+
+
+# ---------------------------------------------------------------------------- #
+# Geradores (enunciado, gabarito_literal, [erradas])
+# ---------------------------------------------------------------------------- #
+
+def _g_matematica_basica(m: int) -> tuple[str, str, list[str]]:
     p = random.choice([10, 20, 25, 50])
     n = 20 * random.randint(2, 6) * m
-    return f"Quanto é {p}% de {n}?", str(p * n // 100)
+    correto = p * n // 100
+    erradas = _erros_num(correto)
+    return f"Quanto é {p}% de {n}?", str(correto), erradas
 
 
-def _g_regra_tres(m: int) -> tuple[str, str]:
+def _g_regra_tres(m: int) -> tuple[str, str, list[str]]:
     unit = random.randint(2, 9) * m
     a, b = random.randint(2, 6), random.randint(2, 8)
+    correto = unit * b
+    erradas = [f"R$ {unit * a}", f"R$ {correto + unit}", f"R$ {correto - unit}"]
     return (
         f"Se {a} kg de maçã custam R$ {unit * a}, quanto custam {b} kg?",
-        f"R$ {unit * b}",
+        f"R$ {correto}",
+        erradas,
     )
 
 
-def _g_graficos_tabelas(m: int) -> tuple[str, str]:
+def _g_graficos_tabelas(m: int) -> tuple[str, str, list[str]]:
     vals = [random.randint(10, 90) * m for _ in range(4)]
+    correto = sum(vals)
+    erradas = _erros_num(correto)
     return (
         f"Uma tabela registra as vendas diárias: {vals}. Qual foi o total?",
-        str(sum(vals)),
+        str(correto),
+        erradas,
     )
 
 
-def _g_medidas(m: int) -> tuple[str, str]:
+def _g_medidas(m: int) -> tuple[str, str, list[str]]:
     vals = [random.randint(2, 18) * m for _ in range(5)]
-    vals[-1] += (5 - sum(vals) % 5) % 5  # garante média inteira.
-    return f"Qual é a média aritmética dos valores {vals}?", str(sum(vals) // 5)
+    vals[-1] += (5 - sum(vals) % 5) % 5
+    correto = sum(vals) // 5
+    erradas = [str(correto + d) for d in [1, -1, 2] if correto + d != correto][:3]
+    return f"Qual é a média aritmética dos valores {vals}?", str(correto), erradas
 
 
-def _g_funcao_1_grau(m: int) -> tuple[str, str]:
+def _g_funcao_1_grau(m: int) -> tuple[str, str, list[str]]:
     a, b = random.randint(2, 5), random.randint(1, 9)
     x0 = random.randint(1, 5) * m
-    return f"Dada f(x) = {a}x + {b}, qual o valor de f({x0})?", str(a * x0 + b)
+    correto = a * x0 + b
+    erradas = [str(a * x0), str(a * x0 - b), str(correto + a)]
+    return f"Dada f(x) = {a}x + {b}, qual o valor de f({x0})?", str(correto), erradas
 
 
-def _g_funcao_2_grau(m: int) -> tuple[str, str]:
+def _g_funcao_2_grau(m: int) -> tuple[str, str, list[str]]:
     r1, r2 = random.randint(1, 4 + m), random.randint(1, 4 + m)
+    correto = f"{min(r1, r2)} e {max(r1, r2)}"
+    s, p = r1 + r2, r1 * r2
+    erradas = [
+        f"{-max(r1,r2)} e {-min(r1,r2)}",
+        f"{s} e {p}",
+        f"{min(r1,r2)-1} e {max(r1,r2)+1}",
+    ]
     return (
-        f"Quais as raízes de x² - {r1 + r2}x + {r1 * r2} = 0?",
-        f"{min(r1, r2)} e {max(r1, r2)}",
+        f"Quais as raízes de x² - {s}x + {p} = 0?",
+        correto,
+        erradas,
     )
 
 
-def _g_padroes_graficos(m: int) -> tuple[str, str]:
+def _g_padroes_graficos(m: int) -> tuple[str, str, list[str]]:
     a0, r = random.randint(1, 9), random.randint(2, 5)
     n = random.randint(4, 6) * m
+    correto = a0 + (n - 1) * r
+    erradas = [str(a0 + n * r), str(a0 + (n - 2) * r), str(a0 * r + n)]
     return (
-        f"Uma sequência começa em {a0} e cresce de {r} em {r}. "
-        f"Qual é o {n}º termo?",
-        str(a0 + (n - 1) * r),
+        f"Uma sequência começa em {a0} e cresce de {r} em {r}. Qual é o {n}º termo?",
+        str(correto),
+        erradas,
     )
 
 
-def _g_poligonos(m: int) -> tuple[str, str]:
+def _g_poligonos(m: int) -> tuple[str, str, list[str]]:
     n = random.randint(3, 6 + m)
+    correto = (n - 2) * 180
+    erradas = [f"{n * 180}°", f"{(n - 1) * 180}°", f"{n * 90}°"]
     return (
         f"Qual a soma dos ângulos internos de um polígono de {n} lados?",
-        f"{(n - 2) * 180}°",
+        f"{correto}°",
+        erradas,
     )
 
 
-def _g_circunferencia(m: int) -> tuple[str, str]:
+def _g_circunferencia(m: int) -> tuple[str, str, list[str]]:
     r = random.randint(2, 6) * m
+    correto = f"{2 * 3.14 * r:.2f}".replace(".", ",")
+    erradas = [
+        f"{3.14 * r:.2f}".replace(".", ","),
+        f"{3.14 * r * r:.2f}".replace(".", ","),
+        f"{4 * 3.14 * r:.2f}".replace(".", ","),
+    ]
     return (
         f"Qual o comprimento de uma circunferência de raio {r}? (use π = 3,14)",
-        f"{2 * 3.14 * r:.2f}".replace(".", ","),
+        correto,
+        erradas,
     )
 
 
-def _g_areas_plana(m: int) -> tuple[str, str]:
+def _g_areas_plana(m: int) -> tuple[str, str, list[str]]:
     b, h = random.randint(3, 9) * m, random.randint(2, 8) * m
-    return f"Qual a área de um retângulo de base {b} e altura {h}?", str(b * h)
+    correto = b * h
+    erradas = [str(b * h // 2), str(2 * (b + h)), str(b + h)]
+    return f"Qual a área de um retângulo de base {b} e altura {h}?", str(correto), erradas
 
 
-def _g_geometria_posicao(m: int) -> tuple[str, str]:
+def _g_geometria_posicao(m: int) -> tuple[str, str, list[str]]:
     dx, dy, dist = random.choice(
         [(3, 4, 5), (6, 8, 10), (5, 12, 13), (8, 15, 17), (9, 12, 15)]
     )
     x1, y1 = random.randint(0, 3), random.randint(0, 3)
+    erradas = [str(dx + dy), str(dist + 2), str(dist - 1)]
     return (
         f"Qual a distância entre P({x1}, {y1}) e Q({x1 + dx}, {y1 + dy})?",
         str(dist),
+        erradas,
     )
 
 
-def _g_volumes(m: int) -> tuple[str, str]:
+def _g_volumes(m: int) -> tuple[str, str, list[str]]:
     a = random.randint(2, 6) * m
     b, c = random.randint(2, 5), random.randint(2, 5)
-    return f"Qual o volume de um paralelepípedo {a} × {b} × {c}?", str(a * b * c)
+    correto = a * b * c
+    erradas = [str(a + b + c), str(2 * (a * b + b * c + a * c)), str(a * b)]
+    return f"Qual o volume de um paralelepípedo {a} × {b} × {c}?", str(correto), erradas
 
 
 # Conceito -> gerador parametrizado de (enunciado, gabarito).
@@ -369,6 +464,7 @@ def _gerar_banco_questoes(conceitos: dict[str, Conceito]) -> list[Questao]:
     Gera o banco em grade: para cada conceito, QUESTOES_POR_CELULA itens em cada
     um dos 3 níveis de dificuldade, com a `dificuldade` ancorada na base do
     conceito mais o deslocamento do nível (com leve ruído para variedade).
+    Cada questão agora é objetiva: gabarito = letra ("A"–"D"), alternativas em JSON.
     """
     questoes: list[Questao] = []
     for nome, base in DIFICULDADE_BASE.items():
@@ -376,7 +472,8 @@ def _gerar_banco_questoes(conceitos: dict[str, Conceito]) -> list[Questao]:
         for _nivel, (offset, magnitude) in NIVEIS.items():
             dif_celula = min(0.95, max(0.05, base + offset))
             for _ in range(QUESTOES_POR_CELULA):
-                enunciado, gabarito = gerar(magnitude)
+                enunciado, gabarito_val, erradas = gerar(magnitude)
+                alternativas, gabarito_letra = _montar_alternativas(gabarito_val, erradas)
                 dificuldade = round(
                     min(0.98, max(0.02, dif_celula + random.uniform(-0.02, 0.02))),
                     3,
@@ -386,7 +483,8 @@ def _gerar_banco_questoes(conceitos: dict[str, Conceito]) -> list[Questao]:
                         conceito_id=conceitos[nome].id,
                         dificuldade=dificuldade,
                         enunciado=enunciado,
-                        gabarito=gabarito,
+                        gabarito=gabarito_letra,
+                        alternativas=json.dumps(alternativas, ensure_ascii=False),
                     )
                 )
     return questoes
