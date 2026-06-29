@@ -6,3 +6,4 @@ docs/
 agent/train.py
 agent/avaliar_robustez.py
 agent/replay_buffer.py
+exportar_onnx.py

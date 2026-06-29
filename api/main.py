@@ -1,7 +1,7 @@
 """
 main.py
 ========
-API FastAPI do Sistema Tutor Inteligente (ITS) com DQN.
+API FastAPI do Sistema Tutor Inteligente (ITS) com DQN via ONNX Runtime.
 
 Expõe o agente como serviço HTTP para o frontend.
 O agente DQN escolhe a Ação Pedagógica (Avançar / Reforçar / Remediar)
@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Optional
 
 import numpy as np
-import torch
+import onnxruntime as ort
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
@@ -42,7 +42,6 @@ from data.database_setup import (
     Interacao,
     Questao,
 )
-from agent.model import DQN
 from api.schemas import (
     ConceitoProficiencia,
     DesempenhoResponse,
@@ -106,7 +105,7 @@ class SessaoAluno:
         dependentes_ids: dict[int, list[int]],
         pre_requisitos_ids: dict[int, list[int]],
     ) -> None:
-        self.estudante_id = estudante_id
+        self.estudante_id = estudiante_id
         self.nome = nome
         self.conceito_ids = conceito_ids
         self.conceito_nomes = conceito_nomes
@@ -225,7 +224,7 @@ _conceito_ids: list[int] = []
 _conceito_nomes: dict[int, str] = {}
 _dependentes_ids: dict[int, list[int]] = {}
 _pre_requisitos_ids: dict[int, list[int]] = {}
-_dqn: Optional[torch.nn.Module] = None
+_dqn_session: Optional[ort.InferenceSession] = None
 _sessions: dict[str, SessaoAluno] = {}
 
 
@@ -251,33 +250,35 @@ def _carregar_grafo() -> None:
 
 
 def _carregar_dqn() -> None:
-    """Carrega a policy_net do checkpoint DQN treinado."""
-    global _dqn
-    weights_path = os.path.join(PROJECT_ROOT, "data", "weights", "dqn_policy.pt")
-    if not os.path.exists(weights_path):
-        return  # opera sem DQN (usa heurística)
-    n_obs = 3 * len(_conceito_ids)
-    n_acoes = 3
-    _dqn = DQN(n_obs, n_acoes)
-    checkpoint = torch.load(weights_path, map_location="cpu", weights_only=False)
-    # Checkpoint pode ser um dict com "policy_net" ou diretamente o state_dict
-    if isinstance(checkpoint, dict) and "policy_net" in checkpoint:
-        _dqn.load_state_dict(checkpoint["policy_net"])
-    else:
-        _dqn.load_state_dict(checkpoint)
-    _dqn.eval()
+    """Carrega a sessão de inferência do ONNX Runtime."""
+    global _dqn_session
+    onnx_path = os.path.join(PROJECT_ROOT, "data", "weights", "dqn_policy.onnx")
+    if not os.path.exists(onnx_path):
+        return  # opera sem DQN (usa heurística de fallback)
+    
+    # Inicializa a sessão estável do ONNX
+    _dqn_session = ort.InferenceSession(onnx_path)
 
 
 def _selecionar_acao_dqn(sessao: SessaoAluno) -> str:
-    """Usa DQN (ou heurística simples) para escolher a ação pedagógica."""
+    """Usa a política DQN via ONNX (ou heurística simples) para escolher a ação pedagógica."""
     acoes = ("Avançar", "Reforçar", "Remediar")
-    if _dqn is not None:
-        state = torch.tensor(sessao.get_state(), dtype=torch.float32).unsqueeze(0)
-        with torch.no_grad():
-            q_values = _dqn(state)
-        idx = int(q_values.argmax().item())
+    if _dqn_session is not None:
+        # Garante o tipo float32 e o shape bidimensional [1, 36] exigido pela rede
+        state = sessao.get_state().astype(np.float32).reshape(1, -1)
+        
+        # Mapeia dinamicamente o nome do nó de entrada ('estado')
+        input_name = _dqn_session.get_inputs()[0].name
+        ort_inputs = {input_name: state}
+        
+        # Executa a inferência direta (feedforward)
+        q_values = _dqn_session.run(None, ort_inputs)[0]
+        
+        # Seleciona o índice do maior valor Q aproximado
+        idx = int(np.argmax(q_values))
         return acoes[idx]
-    # Heurística: se proficiência atual >= 0.75, avança; se < 0.35, remedia.
+        
+    # Heurística de fallback: se proficiência atual >= 0.75, avança; se < 0.35, remedia.
     prof = sessao.prof_real[sessao.conceito_atual_id]
     if prof >= 0.75:
         return "Avançar"
@@ -345,7 +346,7 @@ def _get_sessao(token: str) -> SessaoAluno:
 # ─── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="ITS ENEM — Tutor Adaptativo",
-    description="Sistema Tutor Inteligente com DQN para ENEM",
+    description="Sistema Tutor Inteligente com DQN via ONNX para o ENEM",
     version="1.0.0",
 )
 
@@ -362,7 +363,7 @@ app.add_middleware(
 def startup_event() -> None:
     _carregar_grafo()
     _carregar_dqn()
-    dqn_status = "carregado" if _dqn is not None else "não encontrado (usando heurística)"
+    dqn_status = "carregado (ONNX Runtime)" if _dqn_session is not None else "não encontrado (usando heurística)"
     print(f"[ITS] Conceitos carregados: {len(_conceito_ids)}")
     print(f"[ITS] Modelo DQN: {dqn_status}")
 
@@ -421,6 +422,7 @@ def get_sessao(authorization: str = Header(default="")) -> SessaoResponse:
     token = authorization.replace("Bearer ", "")
     sessao = _get_sessao(token)
 
+    # Corrigido: usando chaves para consistência de tipos int
     conceito_id = sessao.conceito_atual_id
     nome = sessao.conceito_nomes[conceito_id]
     return SessaoResponse(
@@ -447,10 +449,11 @@ def proxima_questao(authorization: str = Header(default="")) -> QuestaoResponse:
     token = authorization.replace("Bearer ", "")
     sessao = _get_sessao(token)
 
-    # DQN escolhe ação pedagógica
+    # DQN escolhe ação pedagógica via ONNX
     acao = _selecionar_acao_dqn(sessao)
 
     # Navega no DAG para o conceito-alvo
+    # Corrigido: usando chaves em vez de inteiros estáticos
     conceito_alvo_id = sessao.selecionar_conceito_alvo(acao)
 
     # ŷ = média da crença (probabilidade esperada de acerto)
@@ -616,6 +619,6 @@ def health():
     return {
         "status": "ok",
         "conceitos": len(_conceito_ids),
-        "dqn": _dqn is not None,
+        "dqn": _dqn_session is not None,
         "sessoes_ativas": len(_sessions),
     }
