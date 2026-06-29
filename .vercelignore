@@ -1,6 +1,8 @@
 .venv/
 __pycache__/
 **/*.pyc
-agent/
 tests/
 docs/
+agent/train.py
+agent/avaliar_robustez.py
+agent/replay_buffer.py
