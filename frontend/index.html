@@ -1159,7 +1159,7 @@
 /* ═══════════════════════════════════════════════════════════════
    ESTADO DA APLICAÇÃO
 ═══════════════════════════════════════════════════════════════ */
-const API = 'http://localhost:8000';
+const API = '';
 
 let state = {
   token:       null,
@@ -1194,6 +1194,7 @@ function apiHeaders() {
 
 async function apiFetch(path, opts = {}) {
   const res = await fetch(API + path, {
+
     ...opts,
     headers: { ...apiHeaders(), ...(opts.headers || {}) },
   });

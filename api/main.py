@@ -105,7 +105,7 @@ class SessaoAluno:
         dependentes_ids: dict[int, list[int]],
         pre_requisitos_ids: dict[int, list[int]],
     ) -> None:
-        self.estudante_id = estudiante_id
+        self.estudante_id = estudante_id
         self.nome = nome
         self.conceito_ids = conceito_ids
         self.conceito_nomes = conceito_nomes
